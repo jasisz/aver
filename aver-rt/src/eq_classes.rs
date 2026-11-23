@@ -5,7 +5,8 @@
 //! node by node each time it meets them. When the same pairs come back —
 //! a term checked against its copy again and again — so does the work.
 //! Here a comparison that walked a pair of nodes of a recursive sum, went at
-//! least `MIN_STEPS` pairs deep (a parameter of
+//! least `MIN_STEPS` steps of its budget deep, pairs of nodes and of
+//! collections counted (a parameter of
 //! [`Walk::node_classed`](crate::Walk::node_classed), which the code
 //! generator sets from `[rust] equality_classes`) and found them equal joins
 //! the two nodes into one class, in a union-find of this thread; a later
@@ -18,7 +19,8 @@
 //! # Where a class is kept
 //!
 //! The tag word of a node of a [`thin`](crate::thin) sum is 32 bits, of
-//! which a constructor's tag takes the low eight (`MAX_TAGS`). The upper 24
+//! which a constructor's tag takes the low eight (`MAX_TAGS`), and `==`
+//! reads both for a pair at once (`view_pair_classed`). The upper 24
 //! hold the node's class: the slot of the thread that gave it ([`SLOT_BITS`]
 //! bits) and the class id plus one ([`ID_BITS`] bits); 0 is no class. Each
 //! thread keeps, for each id it gave, its parent in the union-find (`par`)
@@ -26,8 +28,8 @@
 //! `lazy f(…)` returns (`ThinSum::LAZY`; only such a sum has deferred
 //! calls) keeps the state of its calls in those bits, also after a call is
 //! made, and has no classes; neither has a constructor without fields,
-//! which has no node. Every reader of the tag masks it to the constructor's
-//! byte.
+//! which has no node. Every reader of the tag of a sum with classes reads
+//! the constructor's byte alone, which no class is written into.
 //!
 //! # Invariants
 //!
@@ -58,11 +60,17 @@
 //! - *Several threads.* A thread never takes an id another thread gave, the
 //!   slots differ, so ids of different threads cannot be confused even when
 //!   their numbers meet; a thread writing a node's bits over another's only
-//!   loses the other's class. The tag word is atomic and the bits are
-//!   written with a `Relaxed` load and store that keep its low eight bits,
-//!   which never change in a sum without `lazy`; a node is freed only when
-//!   no other owner is left to write it. At most [`SLOTS`] threads hold a
-//!   slot at once; a thread past them has no classes until one ends.
+//!   loses the other's class. The bits are written and read with `Relaxed`
+//!   atomics as their low byte and their upper 16 bits, never touching the
+//!   tag's byte, which never changes in a sum without `lazy`; a read that
+//!   meets two writes may take the halves from different ones, and such
+//!   bits are as any bits: by I1 they stand for an id only when this thread
+//!   gave that id to this very node. The word is read or written whole only
+//!   while no other thread reaches the node (it is made, made again in
+//!   freed memory, or freed), so accesses of different sizes never race;
+//!   a node is freed only when no other owner is left to write it. At
+//!   most [`SLOTS`] threads hold a slot at once; a thread past them has no
+//!   classes until one ends.
 //! - *A slot used again.* A thread that ends gives its slot back, and a new
 //!   thread takes it with `par` and `owner` empty: for it the bits the old
 //!   thread wrote are as bits from before a start over, which fail I1
@@ -87,10 +95,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The bits of the class id (plus one) in a node's class bits.
-pub const ID_BITS: u32 = 20;
+pub const ID_BITS: u32 = 16;
 
-/// The bits of the thread slot above them.
-pub const SLOT_BITS: u32 = 4;
+/// The bits of the thread slot above them: 255 threads have classes at
+/// once. With four bits (15 threads, 2^20 ids) a check of mathlib on 32
+/// threads spent 10% more instructions, as many threads had no classes;
+/// a thread with fewer ids starts over more often, which cost nothing
+/// measurable on one thread.
+pub const SLOT_BITS: u32 = 8;
 
 /// How many threads have classes: slot 0 is "no class".
 pub const SLOTS: u32 = (1 << SLOT_BITS) - 1;
@@ -358,8 +370,9 @@ mod tests {
         .join()
         .unwrap();
         // Threads that come later take slots again, the old one among them,
-        // and the old bits stand for nothing in any of them.
-        for _ in 0..(2 * SLOTS) {
+        // and the old bits stand for nothing in any of them. Each ends
+        // before the next begins, so a few take the slots given back.
+        for _ in 0..32 {
             let refused = std::thread::spawn(move || {
                 let (x, y) = (fake(0x1_0000), fake(0x1_1000));
                 join(&x, &y);
@@ -395,7 +408,9 @@ mod tests {
     fn threads_past_the_slots_still_join_and_a_freed_slot_is_taken() {
         // More threads than slots at once: those without a slot join many
         // times (each join once took the lock), and none of them breaks.
-        let threads = 3 * SLOTS as usize;
+        // Under Miri each thread joins a few times only.
+        let threads = SLOTS as usize + 16;
+        let joins = if cfg!(miri) { 8 } else { 1000 };
         let start = std::sync::Barrier::new(threads);
         let with_classes = AtomicU32::new(0);
         std::thread::scope(|scope| {
@@ -403,8 +418,8 @@ mod tests {
                 let (start, with_classes) = (&start, &with_classes);
                 scope.spawn(move || {
                     start.wait();
-                    for k in 0..1000 {
-                        let base = 0x10_0000 + (t * 1000 + k) * 0x20;
+                    for k in 0..joins {
+                        let base = 0x10_0000 + (t * joins + k) * 0x20;
                         let (x, y) = (fake(base), fake(base + 0x10));
                         join(&x, &y);
                         if k == 0 && same_nodes(&x, &y) {

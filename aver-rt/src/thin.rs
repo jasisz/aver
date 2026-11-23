@@ -47,7 +47,7 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 
 /// The most constructors a sum laid out this way can have. A value of a
@@ -62,6 +62,69 @@ pub const MAX_TAGS: usize = 256;
 pub struct Header {
     count: AtomicU32,
     tag: AtomicU32,
+}
+
+/// Where in the tag word its bytes are: the tag's, the low byte of the
+/// class bits and their upper 16 bits.
+const TAG_BYTE: usize = if cfg!(target_endian = "little") { 0 } else { 3 };
+const CLASS_LOW: usize = if cfg!(target_endian = "little") { 1 } else { 2 };
+const CLASS_HIGH: usize = if cfg!(target_endian = "little") { 2 } else { 0 };
+
+impl Header {
+    /// The tag of a node of `S`. A sum some `lazy f(…)` returns keeps the
+    /// state of its calls in the whole word and reads it whole; a sum
+    /// without classes has nothing else in it. A sum with classes (see
+    /// [`crate::eq_classes`]) has its tag in the low byte alone, which is
+    /// read alone: its class bits are written byte-wise by other threads
+    /// (see [`Header::class_bits`]) and never that byte, which never
+    /// changes after the node is made, so the tag is read without a mask.
+    #[inline(always)]
+    fn tag_of<S: ThinSum>(&self) -> u32 {
+        match !S::LAZY && cfg!(feature = "equality-classes") {
+            true => self.byte(TAG_BYTE).load(Ordering::Relaxed) as u32,
+            false => self.tag.load(Ordering::Relaxed),
+        }
+    }
+
+    /// The byte of the tag word `at` bytes in.
+    #[inline(always)]
+    fn byte(&self, at: usize) -> &AtomicU8 {
+        // SAFETY: `at < 4`, inside the tag word, whose alignment is more
+        // than a byte's; an atomic is accessed through shared references.
+        // The word is read and written whole only while no other thread
+        // reaches the node (made, made again in its memory, freed), and
+        // byte-wise or by halves otherwise (see `tag_of`): accesses of
+        // different sizes never race.
+        unsafe { AtomicU8::from_ptr(self.tag.as_ptr().cast::<u8>().add(at)) }
+    }
+
+    /// The upper half of the tag word.
+    #[inline(always)]
+    fn half(&self) -> &AtomicU16 {
+        // SAFETY: as in `byte`; the half is 2-aligned in the word.
+        unsafe { AtomicU16::from_ptr(self.tag.as_ptr().cast::<u8>().add(CLASS_HIGH).cast()) }
+    }
+
+    /// The class bits of a node of a sum with classes: the upper 24 bits of
+    /// its tag word, read as their low byte and their upper 16 bits. Written
+    /// by another thread meanwhile, the two may come from different writes:
+    /// the bits are then of no class any thread gave, or of an id this
+    /// thread gave to this very node, as any bits are (I1 in
+    /// [`crate::eq_classes`] checks the id against the node's address).
+    #[inline(always)]
+    fn class_bits(&self) -> u32 {
+        let low = self.byte(CLASS_LOW).load(Ordering::Relaxed) as u32;
+        let high = self.half().load(Ordering::Relaxed) as u32;
+        (high << 8) | low
+    }
+
+    /// Writes the class bits of a node of a sum with classes, as
+    /// [`Header::class_bits`] reads them; the tag byte is not written.
+    #[inline(always)]
+    fn set_class_bits(&self, bits: u32) {
+        self.byte(CLASS_LOW).store(bits as u8, Ordering::Relaxed);
+        self.half().store((bits >> 8) as u16, Ordering::Relaxed);
+    }
 }
 
 #[repr(C)]
@@ -242,42 +305,47 @@ impl<S: ThinSum> Thin<S> {
         if self.is_empty_ctor() {
             (self.ptr.as_ptr().addr() - 1) as u32
         } else {
-            self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK
+            self.header().tag_of::<S>()
         }
     }
 
-    /// The bits of the tag word a constructor's tag takes: all of them in a
-    /// sum some `lazy f(…)` returns, whose deferred calls keep their state
-    /// there, and the low eight otherwise (`MAX_TAGS`), the rest holding the
-    /// node's equality class (see [`crate::eq_classes`]).
-    const TAG_MASK: u32 = if S::LAZY || !cfg!(feature = "equality-classes") {
-        u32::MAX
-    } else {
-        0xff
-    };
+    /// The tag of the value's constructor and the node's equality class
+    /// bits (see [`crate::eq_classes`]): what [`Thin::tag`] and
+    /// [`Thin::class_bits`] answer.
+    #[inline]
+    pub fn tag_and_class_bits(&self) -> (u32, u32) {
+        if self.is_empty_ctor() {
+            return ((self.ptr.as_ptr().addr() - 1) as u32, 0);
+        }
+        let header = self.header();
+        match Self::CLASSED {
+            true => (header.tag_of::<S>(), header.class_bits()),
+            false => (header.tag_of::<S>(), 0),
+        }
+    }
+
+    /// Whether the sum's nodes keep an equality class (see
+    /// [`crate::eq_classes`]) in the upper 24 bits of their tag word.
+    const CLASSED: bool = !S::LAZY && cfg!(feature = "equality-classes");
 
     /// The node's equality class bits (see [`crate::eq_classes`]): 0 for a
     /// constructor without fields and in a sum some `lazy f(…)` returns.
     #[inline]
     pub fn class_bits(&self) -> u32 {
-        if S::LAZY || !cfg!(feature = "equality-classes") || self.is_empty_ctor() {
+        if !Self::CLASSED || self.is_empty_ctor() {
             0
         } else {
-            self.header().tag.load(Ordering::Relaxed) >> 8
+            self.header().class_bits()
         }
     }
 
     /// Writes the node's equality class bits, keeping its tag. Another
-    /// thread may write them at the same time; one of the writes is kept,
-    /// and the tag, which never changes in a sum without `lazy`, with it.
+    /// thread may write them at the same time, or read them while they are
+    /// written: see [`Header::class_bits`].
     #[inline]
     pub fn set_class_bits(&self, bits: u32) {
-        if !S::LAZY && cfg!(feature = "equality-classes") && !self.is_empty_ctor() {
-            let tag = &self.header().tag;
-            tag.store(
-                (tag.load(Ordering::Relaxed) & 0xff) | (bits << 8),
-                Ordering::Relaxed,
-            );
+        if Self::CLASSED && !self.is_empty_ctor() {
+            self.header().set_class_bits(bits);
         }
     }
 
@@ -467,7 +535,7 @@ impl<S: ThinSum> Thin<S> {
             not(feature = "plain-counts")
         ))]
         crate::born::on_free();
-        let tag = self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK;
+        let tag = self.header().tag_of::<S>();
         let mut put_aside = Vec::new();
         unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
         while let Some((node, release)) = put_aside.pop() {
@@ -576,13 +644,7 @@ unsafe fn release<S: ThinSum>(node: NonNull<Header>, pending: Pending<'_>) {
     if !crate::counts::dec32(&header.count) {
         return;
     }
-    unsafe {
-        S::free(
-            node,
-            header.tag.load(Ordering::Relaxed) & Thin::<S>::TAG_MASK,
-            pending,
-        )
-    }
+    unsafe { S::free(node, header.tag_of::<S>(), pending) }
 }
 
 /// How the drop of a value frees its nodes.
@@ -1442,6 +1504,18 @@ macro_rules! thin_sum {
                 })
             }
 
+            /// `view_pair` with both nodes' equality class bits (0 for a
+            /// node that keeps none, see `aver_rt::eq_classes`), read from
+            /// the tag word `view_pair` reads, for
+            /// `aver_rt::Walk::node_classed`.
+            #[inline]
+            $vis fn view_pair_classed<'a>(
+                a: &'a Self,
+                b: &'a Self,
+            ) -> ::std::option::Option<($pair<'a>, u32, u32)> {
+                $crate::thin_sum!(@pair_classed $name $pair a b $( $lazy )? ; $( $tag $ctor $( ( $fields ) )? ),+)
+            }
+
             /// The tag of the value's constructor (its declaration index).
             #[inline]
             $vis fn tag(&self) -> u32 {
@@ -1483,6 +1557,26 @@ macro_rules! thin_sum {
         }
     };
 
+    // A sum some `lazy f(…)` returns keeps no classes.
+    (@pair_classed $name:ident $pair:ident $a:ident $b:ident $lazy:literal ; $( $tag:literal $ctor:ident $( ( $fields:ty ) )? ),+) => {
+        $name::view_pair($a, $b).map(|pair| (pair, 0, 0))
+    };
+    (@pair_classed $name:ident $pair:ident $a:ident $b:ident ; $( $tag:literal $ctor:ident $( ( $fields:ty ) )? ),+) => {{
+        let ((tag, bits_a), (other, bits_b)) = ($a.0.tag_and_class_bits(), $b.0.tag_and_class_bits());
+        if tag != other {
+            return None;
+        }
+        let (a, b) = (&$a.0, &$b.0);
+        Some((
+            match tag {
+                $( $tag => $pair::$ctor $( (unsafe { a.fields::<$fields>() }, unsafe { b.fields::<$fields>() }) )?, )+
+                // As in `view`.
+                _ => unsafe { ::std::hint::unreachable_unchecked() },
+            },
+            bits_a,
+            bits_b,
+        ))
+    }};
     (@is_lazy) => { false };
     (@is_lazy $lazy:literal) => { true };
     (@tag_of $name:ident $tag:literal $fields:ty) => {
@@ -1642,19 +1736,23 @@ mod tests {
 
     impl WalkEq for T {
         fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
-            match T::view_pair(self, other) {
-                None => false,
-                Some(T__Pairs::Leaf(a, b)) => a == b,
-                Some(T__Pairs::Nil | T__Pairs::Unit) => true,
-                Some(T__Pairs::Opt(a, b)) => a.0.walk_eq(&b.0, walk),
+            let Some((pair, bits_a, bits_b)) = T::view_pair_classed(self, other) else {
+                return false;
+            };
+            #[cfg(not(feature = "equality-classes"))]
+            let _ = (bits_a, bits_b);
+            match pair {
+                T__Pairs::Leaf(a, b) => a == b,
+                T__Pairs::Nil | T__Pairs::Unit => true,
+                T__Pairs::Opt(a, b) => a.0.walk_eq(&b.0, walk),
                 #[cfg(feature = "equality-classes")]
-                Some(T__Pairs::Pair(a, b)) => {
-                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                T__Pairs::Pair(a, b) => {
+                    walk.node_classed::<4, _>(self, other, (bits_a, bits_b), true, |walk| {
                         a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                     })
                 }
                 #[cfg(not(feature = "equality-classes"))]
-                Some(T__Pairs::Pair(a, b)) => walk.node(self, other, true, |walk| {
+                T__Pairs::Pair(a, b) => walk.node(self, other, true, |walk| {
                     a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
             }
@@ -2030,6 +2128,17 @@ mod tests {
         assert_eq!(node.tag(), 2);
         assert!(matches!(node.view(), T__View::Pair(_)));
         assert!(T::view_pair(&node, &other).is_some());
+        // The pair with class bits reads the same tag and the bits as
+        // `class_bits` does; a constructor without fields keeps none.
+        assert!(matches!(
+            T::view_pair_classed(&node, &other),
+            Some((T__Pairs::Pair(..), 0xff_ffff, 0xff_ffff))
+        ));
+        assert!(matches!(
+            T::view_pair_classed(&T::Nil, &T::Nil),
+            Some((T__Pairs::Nil, 0, 0))
+        ));
+        assert!(T::view_pair_classed(&node, &T::Nil).is_none());
         assert_eq!(sum(&node), 15);
         let address = super::Thin::addr(&node.0);
         let Ok((T__Pair(x, y, n), token)) = node.try_take_reusing::<T__Pair>() else {
@@ -2256,19 +2365,23 @@ mod tests {
 
     impl WalkEq for L {
         fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
-            match L::view_pair(self, other) {
-                None => false,
-                Some(L__Pairs::Leaf(a, b)) => a == b,
-                Some(L__Pairs::Nil) => true,
-                Some(L__Pairs::Held(a, b)) => a.0 == b.0,
+            let Some((pair, bits_a, bits_b)) = L::view_pair_classed(self, other) else {
+                return false;
+            };
+            #[cfg(not(feature = "equality-classes"))]
+            let _ = (bits_a, bits_b);
+            match pair {
+                L__Pairs::Leaf(a, b) => a == b,
+                L__Pairs::Nil => true,
+                L__Pairs::Held(a, b) => a.0 == b.0,
                 #[cfg(feature = "equality-classes")]
-                Some(L__Pairs::Node(a, b)) => {
-                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                L__Pairs::Node(a, b) => {
+                    walk.node_classed::<4, _>(self, other, (bits_a, bits_b), true, |walk| {
                         a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                     })
                 }
                 #[cfg(not(feature = "equality-classes"))]
-                Some(L__Pairs::Node(a, b)) => walk.node(self, other, true, |walk| {
+                L__Pairs::Node(a, b) => walk.node(self, other, true, |walk| {
                     a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
             }
