@@ -68,8 +68,9 @@
 //!   gave that id to this very node. The word is read or written whole only
 //!   while no other thread reaches the node (it is made, made again in
 //!   freed memory, or freed), so accesses of different sizes never race;
-//!   a node is freed only when no other owner is left to write it. At most [`SLOTS`] threads hold a
-//!   slot at once; a thread past them has no classes until one ends.
+//!   a node is freed only when no other owner is left to write it. At
+//!   most [`SLOTS`] threads hold a slot at once; a thread past them has no
+//!   classes until one ends.
 //! - *A slot used again.* A thread that ends gives its slot back, and a new
 //!   thread takes it with `par` and `owner` empty: for it the bits the old
 //!   thread wrote are as bits from before a start over, which fail I1
@@ -94,10 +95,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The bits of the class id (plus one) in a node's class bits.
-pub const ID_BITS: u32 = 20;
+pub const ID_BITS: u32 = 16;
 
-/// The bits of the thread slot above them.
-pub const SLOT_BITS: u32 = 4;
+/// The bits of the thread slot above them: 255 threads have classes at
+/// once. With four bits (15 threads, 2^20 ids) a check of mathlib on 32
+/// threads spent 10% more instructions, as many threads had no classes;
+/// a thread with fewer ids starts over more often, which cost nothing
+/// measurable on one thread.
+pub const SLOT_BITS: u32 = 8;
 
 /// How many threads have classes: slot 0 is "no class".
 pub const SLOTS: u32 = (1 << SLOT_BITS) - 1;
@@ -365,8 +370,9 @@ mod tests {
         .join()
         .unwrap();
         // Threads that come later take slots again, the old one among them,
-        // and the old bits stand for nothing in any of them.
-        for _ in 0..(2 * SLOTS) {
+        // and the old bits stand for nothing in any of them. Each ends
+        // before the next begins, so a few take the slots given back.
+        for _ in 0..32 {
             let refused = std::thread::spawn(move || {
                 let (x, y) = (fake(0x1_0000), fake(0x1_1000));
                 join(&x, &y);
@@ -402,7 +408,9 @@ mod tests {
     fn threads_past_the_slots_still_join_and_a_freed_slot_is_taken() {
         // More threads than slots at once: those without a slot join many
         // times (each join once took the lock), and none of them breaks.
-        let threads = 3 * SLOTS as usize;
+        // Under Miri each thread joins a few times only.
+        let threads = SLOTS as usize + 16;
+        let joins = if cfg!(miri) { 8 } else { 1000 };
         let start = std::sync::Barrier::new(threads);
         let with_classes = AtomicU32::new(0);
         std::thread::scope(|scope| {
@@ -410,8 +418,8 @@ mod tests {
                 let (start, with_classes) = (&start, &with_classes);
                 scope.spawn(move || {
                     start.wait();
-                    for k in 0..1000 {
-                        let base = 0x10_0000 + (t * 1000 + k) * 0x20;
+                    for k in 0..joins {
+                        let base = 0x10_0000 + (t * joins + k) * 0x20;
                         let (x, y) = (fake(base), fake(base + 0x10));
                         join(&x, &y);
                         if k == 0 && same_nodes(&x, &y) {
