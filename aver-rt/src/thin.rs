@@ -47,7 +47,7 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 
 /// The most constructors a sum laid out this way can have. A value of a
@@ -62,6 +62,69 @@ pub const MAX_TAGS: usize = 256;
 pub struct Header {
     count: AtomicU32,
     tag: AtomicU32,
+}
+
+/// Where in the tag word its bytes are: the tag's, the low byte of the
+/// class bits and their upper 16 bits.
+const TAG_BYTE: usize = if cfg!(target_endian = "little") { 0 } else { 3 };
+const CLASS_LOW: usize = if cfg!(target_endian = "little") { 1 } else { 2 };
+const CLASS_HIGH: usize = if cfg!(target_endian = "little") { 2 } else { 0 };
+
+impl Header {
+    /// The tag of a node of `S`. A sum some `lazy f(…)` returns keeps the
+    /// state of its calls in the whole word and reads it whole; a sum
+    /// without classes has nothing else in it. A sum with classes (see
+    /// [`crate::eq_classes`]) has its tag in the low byte alone, which is
+    /// read alone: its class bits are written byte-wise by other threads
+    /// (see [`Header::class_bits`]) and never that byte, which never
+    /// changes after the node is made, so the tag is read without a mask.
+    #[inline(always)]
+    fn tag_of<S: ThinSum>(&self) -> u32 {
+        match !S::LAZY && cfg!(feature = "equality-classes") {
+            true => self.byte(TAG_BYTE).load(Ordering::Relaxed) as u32,
+            false => self.tag.load(Ordering::Relaxed),
+        }
+    }
+
+    /// The byte of the tag word `at` bytes in.
+    #[inline(always)]
+    fn byte(&self, at: usize) -> &AtomicU8 {
+        // SAFETY: `at < 4`, inside the tag word, whose alignment is more
+        // than a byte's; an atomic is accessed through shared references.
+        // The word is read and written whole only while no other thread
+        // reaches the node (made, made again in its memory, freed), and
+        // byte-wise or by halves otherwise (see `tag_of`): accesses of
+        // different sizes never race.
+        unsafe { AtomicU8::from_ptr(self.tag.as_ptr().cast::<u8>().add(at)) }
+    }
+
+    /// The upper half of the tag word.
+    #[inline(always)]
+    fn half(&self) -> &AtomicU16 {
+        // SAFETY: as in `byte`; the half is 2-aligned in the word.
+        unsafe { AtomicU16::from_ptr(self.tag.as_ptr().cast::<u8>().add(CLASS_HIGH).cast()) }
+    }
+
+    /// The class bits of a node of a sum with classes: the upper 24 bits of
+    /// its tag word, read as their low byte and their upper 16 bits. Written
+    /// by another thread meanwhile, the two may come from different writes:
+    /// the bits are then of no class any thread gave, or of an id this
+    /// thread gave to this very node, as any bits are (I1 in
+    /// [`crate::eq_classes`] checks the id against the node's address).
+    #[inline(always)]
+    fn class_bits(&self) -> u32 {
+        let low = self.byte(CLASS_LOW).load(Ordering::Relaxed) as u32;
+        let high = self.half().load(Ordering::Relaxed) as u32;
+        (high << 8) | low
+    }
+
+    /// Writes the class bits of a node of a sum with classes, as
+    /// [`Header::class_bits`] reads them; the tag byte is not written.
+    #[inline(always)]
+    fn set_class_bits(&self, bits: u32) {
+        self.byte(CLASS_LOW).store(bits as u8, Ordering::Relaxed);
+        self.half().store((bits >> 8) as u16, Ordering::Relaxed);
+    }
 }
 
 #[repr(C)]
@@ -242,57 +305,47 @@ impl<S: ThinSum> Thin<S> {
         if self.is_empty_ctor() {
             (self.ptr.as_ptr().addr() - 1) as u32
         } else {
-            self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK
+            self.header().tag_of::<S>()
         }
     }
 
     /// The tag of the value's constructor and the node's equality class
-    /// bits (see [`crate::eq_classes`]), read from one load of the tag word:
-    /// what [`Thin::tag`] and [`Thin::class_bits`] answer.
+    /// bits (see [`crate::eq_classes`]): what [`Thin::tag`] and
+    /// [`Thin::class_bits`] answer.
     #[inline]
     pub fn tag_and_class_bits(&self) -> (u32, u32) {
         if self.is_empty_ctor() {
             return ((self.ptr.as_ptr().addr() - 1) as u32, 0);
         }
-        let word = self.header().tag.load(Ordering::Relaxed);
-        match S::LAZY || !cfg!(feature = "equality-classes") {
-            true => (word & Self::TAG_MASK, 0),
-            false => (word & Self::TAG_MASK, word >> 8),
+        let header = self.header();
+        match Self::CLASSED {
+            true => (header.tag_of::<S>(), header.class_bits()),
+            false => (header.tag_of::<S>(), 0),
         }
     }
 
-    /// The bits of the tag word a constructor's tag takes: all of them in a
-    /// sum some `lazy f(…)` returns, whose deferred calls keep their state
-    /// there, and the low eight otherwise (`MAX_TAGS`), the rest holding the
-    /// node's equality class (see [`crate::eq_classes`]).
-    const TAG_MASK: u32 = if S::LAZY || !cfg!(feature = "equality-classes") {
-        u32::MAX
-    } else {
-        0xff
-    };
+    /// Whether the sum's nodes keep an equality class (see
+    /// [`crate::eq_classes`]) in the upper 24 bits of their tag word.
+    const CLASSED: bool = !S::LAZY && cfg!(feature = "equality-classes");
 
     /// The node's equality class bits (see [`crate::eq_classes`]): 0 for a
     /// constructor without fields and in a sum some `lazy f(…)` returns.
     #[inline]
     pub fn class_bits(&self) -> u32 {
-        if S::LAZY || !cfg!(feature = "equality-classes") || self.is_empty_ctor() {
+        if !Self::CLASSED || self.is_empty_ctor() {
             0
         } else {
-            self.header().tag.load(Ordering::Relaxed) >> 8
+            self.header().class_bits()
         }
     }
 
     /// Writes the node's equality class bits, keeping its tag. Another
-    /// thread may write them at the same time; one of the writes is kept,
-    /// and the tag, which never changes in a sum without `lazy`, with it.
+    /// thread may write them at the same time, or read them while they are
+    /// written: see [`Header::class_bits`].
     #[inline]
     pub fn set_class_bits(&self, bits: u32) {
-        if !S::LAZY && cfg!(feature = "equality-classes") && !self.is_empty_ctor() {
-            let tag = &self.header().tag;
-            tag.store(
-                (tag.load(Ordering::Relaxed) & 0xff) | (bits << 8),
-                Ordering::Relaxed,
-            );
+        if Self::CLASSED && !self.is_empty_ctor() {
+            self.header().set_class_bits(bits);
         }
     }
 
@@ -482,7 +535,7 @@ impl<S: ThinSum> Thin<S> {
             not(feature = "plain-counts")
         ))]
         crate::born::on_free();
-        let tag = self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK;
+        let tag = self.header().tag_of::<S>();
         let mut put_aside = Vec::new();
         unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
         while let Some((node, release)) = put_aside.pop() {
@@ -591,13 +644,7 @@ unsafe fn release<S: ThinSum>(node: NonNull<Header>, pending: Pending<'_>) {
     if !crate::counts::dec32(&header.count) {
         return;
     }
-    unsafe {
-        S::free(
-            node,
-            header.tag.load(Ordering::Relaxed) & Thin::<S>::TAG_MASK,
-            pending,
-        )
-    }
+    unsafe { S::free(node, header.tag_of::<S>(), pending) }
 }
 
 /// How the drop of a value frees its nodes.
