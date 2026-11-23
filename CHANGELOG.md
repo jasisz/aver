@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.37.1 — 2026-11-23
+
+### Changed
+
+- Compiled Rust: equality classes cost about half as much per compared pair. A node's class bits come with the tag read that the comparison already does, depth is counted off the comparison's budget, and a sum's tag is read as one byte without a mask. A thread's slot and class ids now split 8/16 bits instead of 4/20, so up to 255 threads get classes (each with 2^16 ids before starting over) instead of 15. On a Lean kernel checker written in Aver, mathlib takes 11.5% fewer instructions at 32 workers and 1.5% fewer at 4 workers; Init 1.8% and std 2.0% fewer. Answers are unchanged.
+
 ## 0.37.0 "Permafrost" — 2026-11-22
 
 > _What threads share stays frozen, all the way down._
