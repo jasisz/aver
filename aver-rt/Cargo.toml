@@ -1,6 +1,6 @@
 [package]
 name = "aver-rt"
-version = "0.4.22"
+version = "0.4.23-dev"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
