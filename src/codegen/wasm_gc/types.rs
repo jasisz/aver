@@ -1752,6 +1752,19 @@ impl TypeRegistry {
             })
     }
 
+    /// The spelling under which a `Vector<T>` is registered. A contract
+    /// writes a dependency's type `Module.Type` where the flattened program
+    /// wrote it bare, and the public display keeps spaces the registry's
+    /// compact canonical drops; all of them denote one vector type.
+    pub(super) fn registered_vector_spelling(&self, canonical: &str) -> Option<String> {
+        let normalized = normalize_compound(canonical);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        [normalized, aliased, bare]
+            .into_iter()
+            .find(|candidate| self.vector_types.contains_key(candidate))
+    }
+
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
         let normalized = normalize_compound(canonical);
         let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
