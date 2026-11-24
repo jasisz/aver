@@ -34,9 +34,10 @@
 //! # Invariants
 //!
 //! - **I1.** A thread takes a node's class bits as a class only when their
-//!   slot is its own and its `owner` of their id is the node's address.
+//!   slot is one of its own and its `owner` of their id is the node's
+//!   address.
 //! - **I2.** A thread gives each id to at most one node until it empties
-//!   `par` and `owner` ([`CAP`] ids, then it starts over).
+//!   `par` and `owner` ([`CAP`] ids at most, then it starts over).
 //! - **I3.** Class bits are written only by a thread giving one of its ids;
 //!   a node is made, and a freed node's memory made into a new one, with
 //!   bits 0 (`Thin::new`, `Thin::new_in` write the whole tag word).
@@ -71,11 +72,15 @@
 //!   freed only when no other owner is left to write it. At
 //!   most [`SLOTS`] threads hold a slot at once; a thread past them has no
 //!   classes until one ends.
-//! - *A slot used again.* A thread that ends gives its slot back, and a new
-//!   thread takes it with `par` and `owner` empty: for it the bits the old
+//! - *A slot used again.* A thread gives its slots back when it ends, and
+//!   its further slots when it starts over while another thread waits for
+//!   a first one (it forgets their ids then). A thread that takes such a
+//!   slot, as its first or as a further one, has given no id in it yet:
+//!   its ids there are past every id it gave. For it the bits the old
 //!   thread wrote are as bits from before a start over, which fail I1
-//!   unless the new thread gave that id to that very node, and then it
-//!   wrote the bits again.
+//!   unless it gave that id to that very node, and then it wrote the bits
+//!   again; the lock on the free slots orders every write of the old
+//!   thread before its own.
 //!
 //! What a class needs of `==` is only that a `true` is transitive, which the
 //! generated structural `==` is: a `Float` is compared with IEEE `==`,
@@ -99,16 +104,37 @@ pub const ID_BITS: u32 = 16;
 
 /// The bits of the thread slot above them: 255 threads have classes at
 /// once. With four bits (15 threads, 2^20 ids) a check of mathlib on 32
-/// threads spent 10% more instructions, as many threads had no classes;
-/// a thread with fewer ids starts over more often, which cost nothing
-/// measurable on one thread.
+/// threads spent 10% more instructions, as many threads had no classes.
+/// One slot gives a thread 2^16 ids only, so a thread that runs out of them
+/// takes a further free slot before it starts over (see `Classes::room`):
+/// with one slot a thread started over so often on a long check that it
+/// spent 13% more.
 pub const SLOT_BITS: u32 = 8;
+
+// A thread's place among its slots is kept in a byte.
+const _: () = assert!(SLOTS <= u8::MAX as u32);
 
 /// How many threads have classes: slot 0 is "no class".
 pub const SLOTS: u32 = (1 << SLOT_BITS) - 1;
 
-/// How many ids a thread gives before it starts over.
-pub const CAP: usize = (1 << ID_BITS) - 2;
+/// How many ids one slot gives: an id is written plus one, 0 is no class.
+const PER_SLOT: usize = (1 << ID_BITS) - 1;
+
+/// How many further slots all threads hold at once, a budget of memory:
+/// each slot a thread fills costs 12 bytes per id, 0.75 MB, so the budget
+/// is 48 MB, whether one thread holds it all or many share it. A thread
+/// with a first slot takes a further one while the budget lasts; a thread
+/// that found no first slot gets one from the further slots of others
+/// (see [`WANTED`]). Measured on a Lean kernel checker: one long check on
+/// one thread spent 16% fewer instructions with 64 slots than with 16, and
+/// with no budget mathlib on 4 threads held 0.23 GB more for nothing.
+pub const FURTHER_SLOTS: u32 = 64;
+
+/// How many ids a thread gives at most before it starts over.
+pub const CAP: usize = PER_SLOT * (1 + FURTHER_SLOTS as usize);
+
+/// How many further slots all threads hold now (see [`FURTHER_SLOTS`]).
+static FURTHER: AtomicU32 = AtomicU32::new(0);
 
 const ID_MASK: u32 = (1 << ID_BITS) - 1;
 
@@ -116,6 +142,12 @@ const ID_MASK: u32 = (1 << ID_BITS) - 1;
 const NO_SLOT: u32 = SLOTS + 1;
 
 static NEXT_SLOT: AtomicU32 = AtomicU32::new(1);
+
+/// How many threads asked for a first slot and found none. While it is
+/// above 0 no thread takes a further slot, and a thread that runs out of
+/// ids gives its further slots back before it starts over, so the threads
+/// waiting get one; each thread holds at least its first slot.
+static WANTED: AtomicU32 = AtomicU32::new(0);
 
 /// Slots given back by threads that ended.
 static FREE_SLOTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -127,9 +159,18 @@ static FREE_SLOTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 static FREE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 struct Classes {
-    /// This thread's slot: 0 until it first gives an id, [`NO_SLOT`] when
+    /// This thread's first slot: 0 until it first gives an id, [`NO_SLOT`] when
     /// all were taken.
     slot: u32,
+    /// Whether it asked for a first slot, found none, and is counted in
+    /// [`WANTED`].
+    wanting: bool,
+    /// The further slots it took, in order: id `k * PER_SLOT + i` is
+    /// written in slot `more[k - 1]` for `k` above 0.
+    more: Vec<u32>,
+    /// For each slot, 1 plus its place among this thread's slots (0 for
+    /// the first, `k` for `more[k - 1]`), 0 when it is not this thread's.
+    rank: [u8; 1 << SLOT_BITS],
     /// The union-find parent of each id.
     par: Vec<u32>,
     /// The address of the node each id was given to.
@@ -138,7 +179,14 @@ struct Classes {
 
 thread_local! {
     static CLASSES: RefCell<Classes> = const {
-        RefCell::new(Classes { slot: 0, par: Vec::new(), owner: Vec::new() })
+        RefCell::new(Classes {
+            slot: 0,
+            wanting: false,
+            more: Vec::new(),
+            rank: [0; 1 << SLOT_BITS],
+            par: Vec::new(),
+            owner: Vec::new(),
+        })
     };
     /// Set while the check feature compares a pair in full.
     static CHECKING: Cell<bool> = const { Cell::new(false) };
@@ -149,10 +197,12 @@ impl Classes {
     /// thread (I1).
     #[inline]
     fn id(&self, addr: usize, bits: u32) -> Option<u32> {
-        if bits >> ID_BITS != self.slot || self.slot == 0 {
+        let rank = self.rank[(bits >> ID_BITS) as usize & ((1 << SLOT_BITS) - 1)] as usize;
+        let low = (bits & ID_MASK) as usize;
+        if rank == 0 || low == 0 {
             return None;
         }
-        let id = (bits & ID_MASK).wrapping_sub(1) as usize;
+        let id = (rank - 1) * PER_SLOT + low - 1;
         (self.owner.get(id) == Some(&addr)).then_some(id as u32)
     }
 
@@ -175,46 +225,114 @@ impl Classes {
         let id = self.owner.len() as u32;
         self.owner.push(addr);
         self.par.push(id);
-        node.set_class_bits((self.slot << ID_BITS) | (id + 1));
+        let (k, low) = (id as usize / PER_SLOT, id as usize % PER_SLOT);
+        let slot = if k == 0 { self.slot } else { self.more[k - 1] };
+        node.set_class_bits((slot << ID_BITS) | (low as u32 + 1));
         id
     }
 
     /// Takes a slot for this thread if it has none: one given back, or the
-    /// next never used. A thread that found none tries again later.
+    /// next never used. A thread that found none is counted in [`WANTED`]
+    /// and tries again later.
     fn slot(&mut self) -> bool {
         if self.slot == 0 || self.slot == NO_SLOT {
-            let back = if FREE_COUNT.load(Ordering::Relaxed) == 0 {
-                None
-            } else {
-                FREE_SLOTS.lock().ok().and_then(|mut free| {
-                    let slot = free.pop();
-                    FREE_COUNT.store(free.len() as u32, Ordering::Relaxed);
-                    slot
-                })
-            };
-            self.slot = match back {
-                Some(slot) => slot,
-                // A thread that loses the race to another taking a slot
-                // tries the next one; only all slots taken is none.
-                None => NEXT_SLOT
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                        (next <= SLOTS).then_some(next + 1)
-                    })
-                    .unwrap_or(NO_SLOT),
-            };
+            self.slot = take_slot().unwrap_or(NO_SLOT);
+            let found = self.slot != NO_SLOT;
+            if found {
+                self.rank[self.slot as usize] = 1;
+            }
+            if found == self.wanting {
+                self.wanting = !found;
+                match found {
+                    true => WANTED.fetch_sub(1, Ordering::Relaxed),
+                    false => WANTED.fetch_add(1, Ordering::Relaxed),
+                };
+            }
         }
         self.slot != NO_SLOT
+    }
+
+    /// Room for two more ids. Called on the cold path of a join, it checks
+    /// only when this thread's ids are all given: then, while no thread
+    /// waits for a first slot, it takes a further one (given back, or never
+    /// used) while all threads hold fewer than [`FURTHER_SLOTS`]; else it starts over, which forgets
+    /// every class of this thread, and gives its further slots back when a
+    /// thread waits.
+    fn room(&mut self) {
+        if self.owner.len() + 2 <= (1 + self.more.len()) * PER_SLOT {
+            return;
+        }
+        let waiting = WANTED.load(Ordering::Relaxed) > 0;
+        if !waiting
+            && FURTHER
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
+                    (held < FURTHER_SLOTS).then_some(held + 1)
+                })
+                .is_ok()
+        {
+            if let Some(slot) = take_slot() {
+                self.more.push(slot);
+                self.rank[slot as usize] = (1 + self.more.len()) as u8;
+                return;
+            }
+            FURTHER.fetch_sub(1, Ordering::Relaxed);
+        }
+        self.owner.clear();
+        self.par.clear();
+        if waiting && !self.more.is_empty() {
+            for &slot in &self.more {
+                self.rank[slot as usize] = 0;
+            }
+            give_back(&self.more);
+            FURTHER.fetch_sub(self.more.len() as u32, Ordering::Relaxed);
+            self.more.clear();
+        }
+    }
+}
+
+/// A free slot: one given back, else the next never used.
+fn take_slot() -> Option<u32> {
+    let back = if FREE_COUNT.load(Ordering::Relaxed) == 0 {
+        None
+    } else {
+        FREE_SLOTS.lock().ok().and_then(|mut free| {
+            let slot = free.pop();
+            FREE_COUNT.store(free.len() as u32, Ordering::Relaxed);
+            slot
+        })
+    };
+    // A thread that loses the race to another taking a slot tries the next
+    // one; only all slots taken is none.
+    back.or_else(|| {
+        NEXT_SLOT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                (next <= SLOTS).then_some(next + 1)
+            })
+            .ok()
+    })
+}
+
+/// Gives slots back for other threads to take (see *A slot used again*):
+/// the lock orders every write of their bits by this thread before any
+/// write by the thread that takes them.
+fn give_back(slots: &[u32]) {
+    if let Ok(mut free) = FREE_SLOTS.lock() {
+        free.extend_from_slice(slots);
+        FREE_COUNT.store(free.len() as u32, Ordering::Relaxed);
     }
 }
 
 impl Drop for Classes {
-    /// The thread ends: its slot is given back (see *A slot used again*).
+    /// The thread ends: its slots are given back (see *A slot used again*).
     fn drop(&mut self) {
-        if (1..=SLOTS).contains(&self.slot)
-            && let Ok(mut free) = FREE_SLOTS.lock()
-        {
-            free.push(self.slot);
-            FREE_COUNT.store(free.len() as u32, Ordering::Relaxed);
+        if self.wanting {
+            WANTED.fetch_sub(1, Ordering::Relaxed);
+        }
+        FURTHER.fetch_sub(self.more.len() as u32, Ordering::Relaxed);
+        if (1..=SLOTS).contains(&self.slot) {
+            let mut slots = self.more.clone();
+            slots.push(self.slot);
+            give_back(&slots);
         }
     }
 }
@@ -253,10 +371,7 @@ pub(crate) fn join<N: crate::NodeId>(a: &N, b: &N) {
         if !classes.slot() {
             return;
         }
-        if classes.owner.len() + 2 > CAP {
-            classes.owner.clear();
-            classes.par.clear();
-        }
+        classes.room();
         let x = classes.id_of(a);
         let y = classes.id_of(b);
         let (x, y) = (classes.find(x), classes.find(y));
@@ -313,8 +428,167 @@ mod tests {
         a.bits.get() != 0 && b.bits.get() != 0 && same(a.addr, a.bits.get(), b.addr, b.bits.get())
     }
 
+    /// The tests take slots of the whole process and one of them takes
+    /// all; they run one at a time.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: Mutex<()> = Mutex::new(());
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Joins `pairs` pairs of new nodes from `base` on: two ids each.
+    fn fill(base: usize, pairs: usize) {
+        for k in 0..pairs {
+            let (x, y) = (fake(base + k * 0x40), fake(base + k * 0x40 + 0x20));
+            join(&x, &y);
+        }
+    }
+
+    /// This thread's further slots and how many ids it gave.
+    fn held() -> (Vec<u32>, usize) {
+        CLASSES.with(|c| {
+            let c = c.borrow();
+            (c.more.clone(), c.owner.len())
+        })
+    }
+
+    #[test]
+    fn a_thread_past_one_slot_of_ids_takes_a_further_one() {
+        let _serial = serial();
+        std::thread::spawn(|| {
+            let (a, b) = (fake(0x100_0000), fake(0x100_1000));
+            join(&a, &b);
+            fill(0x200_0000, PER_SLOT / 2 + 8);
+            let (more, ids) = held();
+            assert_eq!(more.len(), 1);
+            assert!(ids > PER_SLOT);
+            // The first pair kept its class: no start over.
+            assert!(same_nodes(&a, &b));
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn many_threads_share_the_slots_out() {
+        // More threads than half the slots, each with a first slot, then
+        // each past one slot of ids at once: the slots left go to further
+        // ones as far as the budget goes, and no thread loses its first.
+        let _serial = serial();
+        if cfg!(miri) {
+            return;
+        }
+        let threads = 160;
+        let start = std::sync::Barrier::new(threads);
+        let started = std::sync::Barrier::new(threads);
+        let done = std::sync::Barrier::new(threads);
+        let (firsts, furthers) = (AtomicU32::new(0), AtomicU32::new(0));
+        std::thread::scope(|scope| {
+            for t in 0..threads {
+                let (start, started, done) = (&start, &started, &done);
+                let (firsts, furthers) = (&firsts, &furthers);
+                scope.spawn(move || {
+                    let base = 0x1000_0000 + t * 0x400_0000;
+                    let (a, b) = (fake(base), fake(base + 0x20));
+                    start.wait();
+                    join(&a, &b);
+                    if same_nodes(&a, &b) {
+                        firsts.fetch_add(1, Ordering::Relaxed);
+                    }
+                    started.wait();
+                    fill(base + 0x40, PER_SLOT / 2 + 8);
+                    furthers.fetch_add(held().0.len() as u32, Ordering::Relaxed);
+                    // Every thread holds its slots until all are counted.
+                    done.wait();
+                });
+            }
+        });
+        assert_eq!(firsts.load(Ordering::Relaxed), threads as u32);
+        let left = SLOTS - threads as u32;
+        assert_eq!(furthers.load(Ordering::Relaxed), left.min(FURTHER_SLOTS));
+    }
+
+    #[test]
+    fn a_thread_starting_over_keeps_its_first_slot() {
+        let _serial = serial();
+        WANTED.fetch_add(1, Ordering::Relaxed);
+        let result = std::thread::spawn(|| {
+            let (a, b) = (fake(0x100_0000), fake(0x100_1000));
+            join(&a, &b);
+            let first = CLASSES.with(|c| c.borrow().slot);
+            // A thread waits: no further slot, a start over instead.
+            fill(0x200_0000, PER_SLOT / 2 + 8);
+            let (more, ids) = held();
+            assert!(more.is_empty());
+            assert!(ids < PER_SLOT);
+            assert!(!same_nodes(&a, &b));
+            assert_eq!(CLASSES.with(|c| c.borrow().slot), first);
+            // Its classes work as before.
+            let (x, y) = (fake(0x300_0000), fake(0x300_1000));
+            join(&x, &y);
+            assert!(same_nodes(&x, &y));
+        })
+        .join();
+        WANTED.fetch_sub(1, Ordering::Relaxed);
+        result.unwrap();
+    }
+
+    #[test]
+    fn a_thread_waiting_for_a_slot_gets_one_given_back() {
+        use std::sync::mpsc::channel;
+        let _serial = serial();
+        // A thread holding a further slot, waiting for word to go on.
+        let (go, wait) = channel::<()>();
+        let (grew, grown) = channel::<()>();
+        let holder = std::thread::spawn(move || {
+            fill(0x200_0000, PER_SLOT / 2 + 8);
+            assert_eq!(held().0.len(), 1);
+            grew.send(()).unwrap();
+            wait.recv().unwrap();
+            // It runs out of ids again while a thread waits.
+            fill(0x400_0000, PER_SLOT);
+            let (more, _) = held();
+            assert!(more.is_empty(), "further slots given back");
+            grew.send(()).unwrap();
+            wait.recv().unwrap();
+        });
+        grown.recv().unwrap();
+        // Every other slot is taken.
+        let next = NEXT_SLOT.swap(SLOTS + 1, Ordering::Relaxed);
+        let free: Vec<u32> = {
+            let mut free = FREE_SLOTS.lock().unwrap();
+            FREE_COUNT.store(0, Ordering::Relaxed);
+            std::mem::take(&mut *free)
+        };
+        let (ask, asked) = channel::<()>();
+        let (answer, answered) = channel::<bool>();
+        let latecomer = std::thread::spawn(move || {
+            while asked.recv().is_ok() {
+                let (x, y) = (fake(0x600_0000), fake(0x600_1000));
+                join(&x, &y);
+                answer.send(same_nodes(&x, &y)).unwrap();
+            }
+        });
+        ask.send(()).unwrap();
+        assert!(!answered.recv().unwrap(), "no slot left for it");
+        assert_eq!(WANTED.load(Ordering::Relaxed), 1);
+        go.send(()).unwrap();
+        grown.recv().unwrap();
+        ask.send(()).unwrap();
+        assert!(answered.recv().unwrap(), "it took the slot given back");
+        assert_eq!(WANTED.load(Ordering::Relaxed), 0);
+        drop(ask);
+        latecomer.join().unwrap();
+        go.send(()).unwrap();
+        holder.join().unwrap();
+        let mut back = FREE_SLOTS.lock().unwrap();
+        back.extend(free);
+        FREE_COUNT.store(back.len() as u32, Ordering::Relaxed);
+        NEXT_SLOT.store(next, Ordering::Relaxed);
+    }
+
     #[test]
     fn joined_nodes_are_one_class_transitively() {
+        let _serial = serial();
         let (a, b, c, d) = (fake(0x1000), fake(0x2000), fake(0x3000), fake(0x4000));
         assert!(!same_nodes(&a, &b));
         join(&a, &b);
@@ -325,6 +599,7 @@ mod tests {
 
     #[test]
     fn an_address_used_again_has_no_class() {
+        let _serial = serial();
         let (y, z) = (fake(0x5000), fake(0x6000));
         join(&y, &z);
         // `y` is freed and `x` made at its address: a new node, bits 0.
@@ -342,6 +617,7 @@ mod tests {
 
     #[test]
     fn starting_over_forgets_classes() {
+        let _serial = serial();
         let (a, b) = (fake(0x8000), fake(0x9000));
         join(&a, &b);
         assert!(same_nodes(&a, &b));
@@ -360,6 +636,7 @@ mod tests {
 
     #[test]
     fn a_slot_given_back_does_not_take_the_old_threads_ids() {
+        let _serial = serial();
         // The first thread joins two nodes and ends, giving its slot back.
         let (bits_a, bits_b) = std::thread::spawn(|| {
             let (a, b) = (fake(0xe000), fake(0xf000));
@@ -387,6 +664,7 @@ mod tests {
 
     #[test]
     fn threads_taking_slots_at_once_each_get_one() {
+        let _serial = serial();
         // Threads that ask for their first slot together race on the next
         // slot never used; a thread that loses takes the one after.
         let threads = 4;
@@ -406,6 +684,7 @@ mod tests {
 
     #[test]
     fn threads_past_the_slots_still_join_and_a_freed_slot_is_taken() {
+        let _serial = serial();
         // More threads than slots at once: those without a slot join many
         // times (each join once took the lock), and none of them breaks.
         // Under Miri each thread joins a few times only.
@@ -443,6 +722,7 @@ mod tests {
 
     #[test]
     fn ids_of_another_thread_are_refused() {
+        let _serial = serial();
         let (a, b) = (fake(0xc000), fake(0xd000));
         join(&a, &b);
         let (bits_a, bits_b) = (a.bits.get(), b.bits.get());
