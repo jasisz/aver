@@ -222,25 +222,35 @@
  },
  "examples/games/eggcatch/core.av": {
   "steps": [
-   "addMiss.monotone",
-   "capMisses.inRange",
+   "bestOf.neverBelowScore",
    "capScore.inRange",
+   "catchEgg.settlesOneEgg",
    "chuteIndex.inRange",
+   "chuteOf.undoesIndex",
    "earn.neverDrops",
-   "foxCount.exactlyOne",
-   "nextPos.advancesByOne",
-   "resolveLip.conserves",
-   "resolveLip.noFalseMiss",
+   "interval.keepsApart",
+   "land.noFalseMiss",
+   "land.settlesOneEgg",
+   "level.inRange",
+   "loseLife.neverNegative",
+   "mend.neverTakes",
+   "missEgg.settlesOneEgg",
+   "napMs.withinOneFrame",
+   "place.rebuildsChute",
+   "speed.alwaysRolls",
+   "speed.hardIsFaster",
    "startBoard.conserves",
    "stepAll.leftFold",
-   "stepChute.belowLipStays",
-   "stepChute.conserves",
-   "stepChute.eggRowStaysInRange",
-   "tallyHit.monotone"
+   "under.basketAtItsOwnChute",
+   "worth.alwaysPays"
   ],
   "tactic": [
-   "basketMark.unitWidth",
-   "placeEgg.conserves"
+   "hatch.conserves"
+  ]
+ },
+ "examples/games/eggcatch/view.av": {
+  "tactic": [
+   "render.eighteenRows"
   ]
  },
  "examples/games/rogue/types.av": {

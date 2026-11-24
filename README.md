@@ -597,7 +597,7 @@ Shared examples under `examples/` resolve from `--module-root examples`. They ar
 - `modules/` for import and module-root examples
 - `services/` for effectful adapter demos
 - `apps/` for small multi-file applications under the shared examples root
-- `games/` for interactive terminal games (Snake, Tetris, Braille Raycaster)
+- `games/` for interactive terminal games (Snake, Tetris, Egg Catch, Braille Raycaster)
 
 Standalone multi-file showcase projects live under `projects/` and use their own local module roots.
 
@@ -634,6 +634,7 @@ Curated shared examples:
 | `games/snake.av` | Terminal Snake: immutable state, TCO game loop, Terminal service |
 | `games/tetris/main.av` | Modular Tetris: sum types, 2D grid, collision, line clearing (4 modules, 66 verify cases) |
 | `games/checkers/main.av` | Checkers with alpha-beta AI: cursor UI, forced capture, decision trace (5 modules, 144 verify cases) |
+| `games/eggcatch/main.av` | Egg Catch: four chutes, eggs rolling in Braille dots, pure engine and view with 42 laws, replay as a left fold of `step` (3 modules, 165 verify blocks) |
 | `games/raycaster/main.av` | Braille Raycaster: raycasting FPS with Unicode Braille rendering, procedural levels, 3 enemy types with line-of-sight AI, shooting, wall textures (13 modules) |
 | `core/test_errors.av` | Intentional `aver check` failures: type errors + verify/decision/effect diagnostics |
 
