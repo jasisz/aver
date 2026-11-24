@@ -47,7 +47,7 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 
 /// The most constructors a sum laid out this way can have. A value of a
@@ -64,66 +64,46 @@ pub struct Header {
     tag: AtomicU32,
 }
 
-/// Where in the tag word its bytes are: the tag's, the low byte of the
-/// class bits and their upper 16 bits.
-const TAG_BYTE: usize = if cfg!(target_endian = "little") { 0 } else { 3 };
-const CLASS_LOW: usize = if cfg!(target_endian = "little") { 1 } else { 2 };
-const CLASS_HIGH: usize = if cfg!(target_endian = "little") { 2 } else { 0 };
-
 impl Header {
     /// The tag of a node of `S`. A sum some `lazy f(…)` returns keeps the
-    /// state of its calls in the whole word and reads it whole; a sum
-    /// without classes has nothing else in it. A sum with classes (see
-    /// [`crate::eq_classes`]) has its tag in the low byte alone, which is
-    /// read alone: its class bits are written byte-wise by other threads
-    /// (see [`Header::class_bits`]) and never that byte, which never
-    /// changes after the node is made, so the tag is read without a mask.
+    /// state of its calls in the whole word; a sum without classes has
+    /// nothing else in it. A sum with classes (see [`crate::eq_classes`])
+    /// has its tag in the low byte, under the class bits other threads may
+    /// write meanwhile, and that byte never changes after the node is made.
+    /// The word is always read and written whole: a write of the class bits
+    /// in parts would let a reader, or a later write, take parts of two
+    /// writes, bits that may name an id this thread once gave to a freed
+    /// node at the same address (see I1 in [`crate::eq_classes`]).
     #[inline(always)]
     fn tag_of<S: ThinSum>(&self) -> u32 {
         match !S::LAZY && cfg!(feature = "equality-classes") {
-            true => self.byte(TAG_BYTE).load(Ordering::Relaxed) as u32,
+            true => self.tag.load(Ordering::Relaxed) & 0xff,
             false => self.tag.load(Ordering::Relaxed),
         }
     }
 
-    /// The byte of the tag word `at` bytes in.
+    /// The tag and the class bits of a node of a sum with classes, from one
+    /// read of the word: the bits of one write, whole.
     #[inline(always)]
-    fn byte(&self, at: usize) -> &AtomicU8 {
-        // SAFETY: `at < 4`, inside the tag word, whose alignment is more
-        // than a byte's; an atomic is accessed through shared references.
-        // The word is read and written whole only while no other thread
-        // reaches the node (made, made again in its memory, freed), and
-        // byte-wise or by halves otherwise (see `tag_of`): accesses of
-        // different sizes never race.
-        unsafe { AtomicU8::from_ptr(self.tag.as_ptr().cast::<u8>().add(at)) }
-    }
-
-    /// The upper half of the tag word.
-    #[inline(always)]
-    fn half(&self) -> &AtomicU16 {
-        // SAFETY: as in `byte`; the half is 2-aligned in the word.
-        unsafe { AtomicU16::from_ptr(self.tag.as_ptr().cast::<u8>().add(CLASS_HIGH).cast()) }
+    fn tag_and_class_bits(&self) -> (u32, u32) {
+        let word = self.tag.load(Ordering::Relaxed);
+        (word & 0xff, word >> 8)
     }
 
     /// The class bits of a node of a sum with classes: the upper 24 bits of
-    /// its tag word, read as their low byte and their upper 16 bits. Written
-    /// by another thread meanwhile, the two may come from different writes:
-    /// the bits are then of no class any thread gave, or of an id this
-    /// thread gave to this very node, as any bits are (I1 in
-    /// [`crate::eq_classes`] checks the id against the node's address).
+    /// its tag word, read whole, so the bits of one write.
     #[inline(always)]
     fn class_bits(&self) -> u32 {
-        let low = self.byte(CLASS_LOW).load(Ordering::Relaxed) as u32;
-        let high = self.half().load(Ordering::Relaxed) as u32;
-        (high << 8) | low
+        self.tag.load(Ordering::Relaxed) >> 8
     }
 
-    /// Writes the class bits of a node of a sum with classes, as
-    /// [`Header::class_bits`] reads them; the tag byte is not written.
+    /// Writes the class bits of a node of a sum with classes in one store of
+    /// the whole word, keeping its tag byte, which never changes: of two
+    /// writes at once one is kept whole, tag with it.
     #[inline(always)]
     fn set_class_bits(&self, bits: u32) {
-        self.byte(CLASS_LOW).store(bits as u8, Ordering::Relaxed);
-        self.half().store((bits >> 8) as u16, Ordering::Relaxed);
+        let tag = self.tag.load(Ordering::Relaxed) & 0xff;
+        self.tag.store(tag | (bits << 8), Ordering::Relaxed);
     }
 }
 
@@ -319,7 +299,7 @@ impl<S: ThinSum> Thin<S> {
         }
         let header = self.header();
         match Self::CLASSED {
-            true => (header.tag_of::<S>(), header.class_bits()),
+            true => header.tag_and_class_bits(),
             false => (header.tag_of::<S>(), 0),
         }
     }
@@ -1676,6 +1656,52 @@ macro_rules! thin_sum {
 #[allow(non_camel_case_types)]
 mod tests {
     use crate::shared_eq::{Walk, WalkEq, walk_eq};
+
+    /// Two threads writing a node's class bits at once leave the bits of
+    /// one write whole, never parts of both, and readers meanwhile see the
+    /// bits of one write too (I1 of `eq_classes` holds only for whole
+    /// bits: parts of two writes may name an id given to a node once at
+    /// this address), and the tag is kept.
+    #[cfg(feature = "equality-classes")]
+    #[test]
+    fn class_bits_written_at_once_are_never_torn() {
+        use super::Header;
+        use std::sync::atomic::AtomicU32;
+        let header = Header {
+            count: AtomicU32::new(1),
+            tag: AtomicU32::new(0x2a),
+        };
+        // Bits that differ in every byte, as a slot, an id's high byte and
+        // its low byte.
+        let writes = [0x01_02_03u32, 0x04_05_06, 0x07_08_09];
+        let rounds = if cfg!(miri) { 20 } else { 2_000_000 };
+        let start = std::sync::Barrier::new(writes.len() + 1);
+        let torn = AtomicU32::new(0);
+        std::thread::scope(|scope| {
+            for &bits in &writes {
+                let (header, start) = (&header, &start);
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..rounds {
+                        header.set_class_bits(bits);
+                    }
+                });
+            }
+            let (header, start, torn) = (&header, &start, &torn);
+            scope.spawn(move || {
+                start.wait();
+                for _ in 0..rounds {
+                    let seen = header.class_bits();
+                    if seen != 0 && !writes.contains(&seen) {
+                        torn.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            });
+        });
+        assert_eq!(torn.load(Ordering::Relaxed), 0, "torn class bits read");
+        assert!(writes.contains(&header.class_bits()));
+        assert_eq!(header.tag.load(Ordering::Relaxed) & 0xff, 0x2a);
+    }
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
