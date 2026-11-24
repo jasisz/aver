@@ -1,0 +1,15 @@
+module Jobs
+    depends [Words]
+    intent = "The task and the answer of a mixing job, holding refinements another module owns."
+    exposes [Task, Report]
+    effects []
+
+record Task
+    seed: Words.Word
+    step: Words.Step
+    words: List<Words.Word>
+
+record Report
+    word: Words.Word
+    step: Words.Step
+    count: Int

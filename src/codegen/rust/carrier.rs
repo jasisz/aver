@@ -48,8 +48,10 @@ struct Candidate {
 /// within `i64`. A type may have several: every value then lies in the
 /// union of what they admit, which is the carrier's bound. It stays one when nothing else builds it from anything but a
 /// literal within that bound, in a function or a module binding, and when
-/// it does not cross to a provider: a capability's boundary type or a wait
-/// set's key, whose codecs keep the declared field.
+/// it does not cross to a host provider: the boundary type of a capability
+/// other than a job kind, or a wait set's key. A job kind's task and answer
+/// may hold one: their codecs carry the field as the `Int` it is and check
+/// the bound when they read it back.
 ///
 /// Verify cases may build a carrier from any value: they compile to tests
 /// only, built with overflow checks, where a value outside the bound that
@@ -108,9 +110,9 @@ pub(crate) struct CarrierCtor {
 /// with the line that does it. `items` is the module checked as the entry
 /// of its program and `symbols` the program's symbol table. A carrier is a
 /// type the checker's literal discharge recognizes as a refinement over
-/// `Int` with a bound within `i64` (the boundary types of capabilities and
-/// the keys of wait sets, which the backend also rules out, are left to
-/// `aver compile`).
+/// `Int` with a bound within `i64` (the boundary types of capabilities
+/// other than job kinds and the keys of wait sets, which the backend also
+/// rules out, are left to `aver compile`).
 pub fn check_findings(
     items: &[TopLevel],
     symbols: &crate::ir::SymbolTable,
@@ -388,7 +390,10 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
         let Some(id) = ctx.symbol_table.type_id_of(&type_key) else {
             continue;
         };
-        if ctx.capabilities.boundary_type(&label).is_some() {
+        // A job kind's task and answer cross to a host only through their
+        // codecs, which widen and check the field; any other capability's
+        // provider answers with its own Rust value.
+        if ctx.capabilities.is_host_boundary_type(&label) {
             keep("it is a capability's boundary type".to_string());
             continue;
         }
@@ -486,6 +491,33 @@ pub(super) fn declared_storage(
         None => TypeKey::entry(name),
     };
     storage_of(ctx, ctx.symbol_table.type_id_of(&key))
+}
+
+/// The machine integer the record `name` declared in `scope` is stored in
+/// and its bound, when it is a carrier.
+pub(super) fn declared_carrier(
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    name: &str,
+) -> Option<(&'static str, Interval)> {
+    let key = match scope {
+        Some(prefix) => TypeKey::in_module(prefix, name),
+        None => TypeKey::entry(name),
+    };
+    let interval = *ctx
+        .rust_i64_carriers
+        .get(&ctx.symbol_table.type_id_of(&key)?)?;
+    Some((storage_for(interval), interval))
+}
+
+/// The ends of a carrier's bound as `i64` literals, an open end as the
+/// end of `i64`.
+pub(super) fn i64_ends(interval: Interval) -> (String, String) {
+    let end = |bound: Bound, open: &str| match bound {
+        Bound::Finite(k) if i64::try_from(k).is_ok_and(|k| k > i64::MIN) => format!("{k}i64"),
+        _ => open.to_string(),
+    };
+    (end(interval.lo, "i64::MIN"), end(interval.hi, "i64::MAX"))
 }
 
 /// The functions of `scope` (`None`: the entry).

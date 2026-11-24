@@ -1,0 +1,19 @@
+module Node
+    depends [Jobs, Words]
+    intent = "The pure function one mixing job runs."
+    exposes [mix]
+    effects []
+
+fn mix(task: Jobs.Task) -> Jobs.Report
+    ? "Moves the seed by the step once per word, and reports the last word with the step and how many words there were."
+    Jobs.Report(word = mixAll(task.seed, task.step, task.words), step = task.step, count = List.len(task.words))
+
+fn mixAll(w: Words.Word, s: Words.Step, ws: List<Words.Word>) -> Words.Word
+    ? "Moves the seed once per word."
+    match ws
+        [] -> w
+        [_, ..rest] -> mixAll(Words.mixed(w, s), s, rest)
+
+verify mixAll
+    mixAll(Words.wordOf(5), Words.stepOf(2), [Words.wordOf(1), Words.wordOf(1)]) => Words.wordOf(9)
+    mixAll(Words.wordOf(5), Words.stepOf(2), []) => Words.wordOf(5)

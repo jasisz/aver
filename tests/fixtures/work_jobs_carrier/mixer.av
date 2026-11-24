@@ -1,0 +1,16 @@
+module Mixer
+    kind = capability
+    semantics = effectful
+    depends [Work, Jobs]
+    intent = "One job kind whose task and answer are another module's records holding machine-word refinements."
+    exposes [begin, take]
+
+operation begin(task: Jobs.Task) -> Result<Work.Job, String>
+    ? "Starts one mixing job off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Jobs.Report>, String>
+    ? "Collects a finished job's report, or None while it still runs."
+    oracle = generativeOutput
+    replay = recorded

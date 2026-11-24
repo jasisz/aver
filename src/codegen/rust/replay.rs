@@ -220,11 +220,11 @@ fn emit_record_impl(
     };
     // A carrier held as a raw `i64` records and replays its field as the
     // `Int` it is.
-    let carrier = super::carrier::declared_storage(ctx, scope, name);
+    let carrier = super::carrier::declared_carrier(ctx, scope, name);
     let to_fields = fields
         .iter()
         .map(|(field_name, _)| {
-            if let Some(storage) = carrier {
+            if let Some((storage, _)) = carrier {
                 let read = super::carrier::widened(
                     &format!("self.{}", aver_name_to_rust(field_name)),
                     storage,
@@ -257,10 +257,14 @@ fn emit_record_impl(
                 field_name,
                 format!("$record {name} missing field '{field_name}'")
             );
-            if let Some(storage) = carrier {
+            if let Some((storage, interval)) = carrier {
+                // A recording may hold any `Int`: one the smart constructors
+                // would not admit is refused, as the provider codec does.
+                let (lo, hi) = super::carrier::i64_ends(interval);
                 format!(
-                    "                {}: ({decoded}).to_i64().and_then(|word| <{storage}>::try_from(word).ok()).ok_or_else(|| {:?}.to_string())?,",
+                    "                {}: ({decoded}).to_i64().filter(|word| ({lo}..={hi}).contains(word)).map(|word| {}).ok_or_else(|| {:?}.to_string())?,",
                     aver_name_to_rust(field_name),
+                    super::carrier::narrowed("word", storage, false),
                     format!("$record {name} field '{field_name}' is out of its range")
                 )
             } else if packed_u8 {

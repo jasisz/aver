@@ -555,10 +555,17 @@ pub(super) fn emit_represented_type_codec(
                     &canonical,
                     &field_type,
                 ),
-                false => {
-                    let boxed = super::representation::is_boxed_record(type_def, ctx);
-                    emit_record_codec(name, fields, (boxed, false), &canonical, &field_type)
-                }
+                false => match super::carrier::declared_carrier(
+                    ctx,
+                    (!module.is_empty()).then_some(module),
+                    bare,
+                ) {
+                    Some(carrier) => emit_carrier_codec(name, fields, carrier, &canonical),
+                    None => {
+                        let boxed = super::representation::is_boxed_record(type_def, ctx);
+                        emit_record_codec(name, fields, (boxed, false), &canonical, &field_type)
+                    }
+                },
             }
         }
         TypeDef::Sum { name, variants, .. } => emit_sum_codec(
@@ -573,6 +580,59 @@ pub(super) fn emit_represented_type_codec(
     format!(
         "{codec}\n\n#[allow(non_camel_case_types)]\npub type {} = {bare};",
         canonical.replace('.', "_")
+    )
+}
+
+/// The codec of a carrier held as a raw `i64` (see `carrier`): its field
+/// crosses as the `Int` it is, and reading it back checks the bound, so a
+/// value from a recording or a host that the smart constructors would not
+/// admit is refused rather than stored.
+fn emit_carrier_codec(
+    name: &str,
+    fields: &[(String, String)],
+    (storage, interval): (&'static str, crate::ir::interval::Interval),
+    canonical: &str,
+) -> String {
+    let [(field, _)] = fields else {
+        unreachable!("a carrier has one field");
+    };
+    let rust_field = aver_name_to_rust(field);
+    let read = super::carrier::widened(&format!("self.{rust_field}"), storage);
+    let (lo, hi) = super::carrier::i64_ends(interval);
+    let stored = super::carrier::narrowed("word", storage, false);
+    format!(
+        r#"impl aver_rt::provider::ProviderCodec for {name} {{
+    fn into_provider_value(self, registry: &aver_rt::provider::NativeProviderRegistry, capability: &str) -> Result<aver_rt::provider::ProviderValue, String> {{
+        use aver_rt::provider::ProviderCodec as _;
+        Ok(aver_rt::provider::ProviderValue::Record {{
+            type_name: {canonical:?}.to_string(),
+            fields: vec![({field:?}.to_string(), aver_rt::AverInt::from_i64({read}).into_provider_value(registry, capability)?)],
+        }})
+    }}
+
+    fn from_provider_value(value: aver_rt::provider::ProviderValue, registry: &aver_rt::provider::NativeProviderRegistry, capability: &str, minted_resource: Option<&str>) -> Result<Self, String> {{
+        let aver_rt::provider::ProviderValue::Record {{ type_name, fields }} = value else {{
+            return Err(format!("expected represented boundary type '{canonical}', got {{}}", value.shape()));
+        }};
+        if type_name != {canonical:?} {{
+            return Err(format!("expected represented boundary type '{canonical}', got record {{}}", type_name));
+        }}
+        let mut value = None;
+        for (field, field_value) in fields {{
+            if field != {field:?} {{
+                return Err(format!("record '{canonical}' has unknown field '{{}}'", field));
+            }}
+            if value.replace(field_value).is_some() {{
+                return Err("record '{canonical}' contains duplicate field '{field}'".to_string());
+            }}
+        }}
+        let value = value.ok_or_else(|| "record '{canonical}' is missing field '{field}'".to_string())?;
+        let int = <aver_rt::AverInt as aver_rt::provider::ProviderCodec>::from_provider_value(value, registry, capability, minted_resource)?;
+        let word = int.to_i64().filter(|word| ({lo}..={hi}).contains(word))
+            .ok_or_else(|| "record '{canonical}' field '{field}' is out of its range".to_string())?;
+        Ok({name} {{ {rust_field}: {stored} }})
+    }}
+}}"#
     )
 }
 
