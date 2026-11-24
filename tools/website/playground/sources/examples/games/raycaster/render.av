@@ -2,7 +2,7 @@ module Render
     intent =
         "The effectful half of the renderer: prints the viewport rows, enemy sprites,"
         "crosshair, status panel, minimap and messages, laid out for an 80 x 24 terminal."
-    depends [Types, Tiles, Ray, Enemy, View, Texture]
+    depends [Types, Tiles, Ray, Enemy, View, Sprites]
     effects [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
@@ -97,31 +97,31 @@ fn renderSprites(sprites: List<Sprite>, cols: Vector<Column>) -> Result<Unit, St
 fn renderSprite(s: Sprite, rest: List<Sprite>, cols: Vector<Column>) -> Result<Unit, String>
     ? "Paint one sprite, then the nearer ones"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
-    Terminal.setColor(Types.enemyColor(s.kind))?
-    renderSpriteCells(s, cols, Int.max(0, s.top), Int.max(0, s.left))?
+    Terminal.setColor(Sprites.spriteColor(s))?
+    renderSpriteCells(s, cols, Sprites.firstRow(s), Sprites.firstCol(s))?
     renderSprites(rest, cols)
 
 fn renderSpriteCells(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int) -> Result<Unit, String>
-    ? "Walk the on-screen part of a sprite's rectangle from cell (cx, cy)"
+    ? "Walk the on-screen cells of a sprite's rectangle from cell (cx, cy)"
     ! [Terminal.moveTo, Terminal.print]
-    match cy >= Int.min(View.screenH(), s.top + s.rows)
+    match cy >= Sprites.endRow(s)
         true -> Result.Ok(Unit)
-        false -> match cx >= Int.min(View.screenW(), s.left + s.cols)
-            true -> renderSpriteCells(s, cols, cy + 1, Int.max(0, s.left))
+        false -> match cx >= Sprites.endCol(s)
+            true -> renderSpriteCells(s, cols, cy + 1, Sprites.firstCol(s))
             false -> renderSpriteCell(s, cols, cy, cx)
 
 fn renderSpriteCell(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int) -> Result<Unit, String>
-    ? "Paint one sprite cell when the sprite shows there"
+    ? "Paint one sprite cell when the enemy's figure reaches into it"
     ! [Terminal.moveTo, Terminal.print]
-    match View.spriteShows(s, cols, cx, cy)
-        true -> paintSpriteCell(s, cols, cy, cx)
-        false -> renderSpriteCells(s, cols, cy, cx + 1)
+    match Sprites.cellGlyph(s, cols, cx, cy)
+        Option.Some(glyph) -> paintSpriteCell(s, cols, cy, cx, glyph)
+        Option.None -> renderSpriteCells(s, cols, cy, cx + 1)
 
-fn paintSpriteCell(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int) -> Result<Unit, String>
-    ? "Print a full block at a sprite cell and go on"
+fn paintSpriteCell(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int, glyph: String) -> Result<Unit, String>
+    ? "Print a sprite cell's glyph and go on"
     ! [Terminal.moveTo, Terminal.print]
     moveToChecked(cx, cy)?
-    Terminal.print(Texture.fullBlock())?
+    Terminal.print(glyph)?
     renderSpriteCells(s, cols, cy, cx + 1)
 
 fn crosshairColor(state: GameState) -> String
@@ -339,7 +339,7 @@ fn renderFrame(state: GameState) -> Result<Unit, String>
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     cols = View.columns(state.grid, state.player, 0, [])
     renderView(cols, 0)?
-    renderSprites(View.sprites(state.player, state.enemies, []), cols)?
+    renderSprites(Sprites.sprites(state.player, state.enemies, state.turnCount, []), cols)?
     renderCrosshair(state)?
     renderHud(state)?
     renderMinimap(state, 0)?

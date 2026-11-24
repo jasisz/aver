@@ -1,8 +1,7 @@
 module View
     intent =
         "The pure half of the renderer: the camera, one wall column per horizontal Braille dot,"
-        "terminal rows as colored runs of glyphs, and enemy sprites projected"
-        "and depth-tested against the walls."
+        "and terminal rows as colored runs of glyphs."
     depends [Types, Tiles, Ray, Texture]
     effects []
 
@@ -30,20 +29,7 @@ decision CameraPlaneProjection
         "and one scale serves both axes: a tile is drawn as tall as it is wide."
     chosen = "CameraPlane"
     rejected = ["EqualAnglesWithCosine"]
-    impacts = [column, wallScale, spriteAt]
-
-decision SpritesTestedPerCell
-    date = "2026-11-24"
-    author = "Claude"
-    reason =
-        "An enemy was drawn whole whenever its centre column was in front of the wall,"
-        "so one standing half behind a corner showed through the wall."
-        "Its distance was Euclidean while the wall's was a depth, so the comparison drifted toward the screen edges."
-        "Each sprite cell is now compared with the wall depth of its own two columns, both measured as depth,"
-        "and sprites are painted far to near so a near enemy covers a far one."
-    chosen = "DepthTestPerCell"
-    rejected = ["CentreColumnOnly"]
-    impacts = [inFront, spriteShows, project, insertFarFirst]
+    impacts = [column, wallScale]
 // ─── Screen and camera ─────────────────────────────────────────────────────
 
 fn screenW() -> Int
@@ -104,14 +90,6 @@ record Column
 record Run
     color: String
     text: String
-
-record Sprite
-    kind: EnemyKind
-    depth: Float
-    left: Int
-    top: Int
-    cols: Int
-    rows: Int
 
 // ─── Wall columns ──────────────────────────────────────────────────────────
 
@@ -265,8 +243,6 @@ verify viewRow law everyRowIsFullWidth
     given turn: Int = 0..7
     runsWidth(viewRow(columns(Tiles.gridOf(["#######", "#..B..#", "#.#.M.#", "#.....#", "#######"]), Player(x = 1.5, y = 1.5, angle = Float.fromInt(turn) * 0.8, hp = 100), 0, []), row, 0, []), 0) => 60
 
-// ─── Enemy sprites ─────────────────────────────────────────────────────────
-
 fn runsWidth(runs: List<Run>, acc: Int) -> Int
     ? "Number of cells a list of runs covers"
     match runs
@@ -276,128 +252,3 @@ fn runsWidth(runs: List<Run>, acc: Int) -> Int
 verify runsWidth
     runsWidth([], 0) => 0
     runsWidth([Run(color = "red", text = "ab"), Run(color = "blue", text = "c")], 0) => 3
-
-fn spriteHeight(kind: EnemyKind) -> Float
-    ? "Height of an enemy in map units; a wall is 1 high"
-    match kind
-        EnemyKind.Crawler -> 0.7
-        EnemyKind.Brute -> 0.95
-        EnemyKind.Wisp -> 0.6
-
-verify spriteHeight
-    spriteHeight(EnemyKind.Crawler) => 0.7
-    spriteHeight(EnemyKind.Brute) => 0.95
-    spriteHeight(EnemyKind.Wisp) => 0.6
-
-fn spriteAspect(kind: EnemyKind) -> Float
-    ? "Width of an enemy as a share of its height"
-    match kind
-        EnemyKind.Crawler -> 0.8
-        EnemyKind.Brute -> 0.95
-        EnemyKind.Wisp -> 1.0
-
-verify spriteAspect
-    spriteAspect(EnemyKind.Crawler) => 0.8
-    spriteAspect(EnemyKind.Brute) => 0.95
-    spriteAspect(EnemyKind.Wisp) => 1.0
-
-fn spriteLift(kind: EnemyKind) -> Float
-    ? "How high above the floor an enemy's feet are: the wisp floats"
-    match kind
-        EnemyKind.Wisp -> 0.25
-        _ -> 0.0
-
-verify spriteLift
-    spriteLift(EnemyKind.Wisp) => 0.25
-    spriteLift(EnemyKind.Crawler) => 0.0
-
-fn spriteAt(kind: EnemyKind, depth: Float, side: Float) -> Sprite
-    ? "Screen rectangle, in terminal cells, of an enemy depth ahead of the camera and side to its right"
-    unit = wallScale() / depth
-    height = spriteHeight(kind) * unit
-    feet = Float.fromInt(horizon()) + unit * (0.5 - spriteLift(kind))
-    cols = Int.max(1, Float.round(height * spriteAspect(kind) / 2.0))
-    centre = (Float.fromInt(pixelW()) / 2.0 + side * unit) / 2.0
-    Sprite(kind = kind, depth = depth, left = Float.round(centre - Float.fromInt(cols) / 2.0), top = Float.round((feet - height) / 4.0), cols = cols, rows = Int.max(1, Float.round(height / 4.0)))
-
-verify spriteAt
-    spriteAt(EnemyKind.Brute, 2.0, 0.0).rows => 11
-    spriteAt(EnemyKind.Brute, 2.0, 0.0).cols => 21
-    spriteAt(EnemyKind.Brute, 2.0, 0.0).left => 20
-    spriteAt(EnemyKind.Brute, 2.0, 0.0).top => 5
-    spriteAt(EnemyKind.Crawler, 60.0, 0.0).rows => 1
-    spriteAt(EnemyKind.Crawler, 60.0, 0.0).cols => 1
-    spriteAt(EnemyKind.Crawler, 4.0, 1.0).left > spriteAt(EnemyKind.Crawler, 4.0, 0.0).left => true
-
-fn project(player: Player, e: Enemy) -> Option<Sprite>
-    ? "The sprite of an enemy, unless it is behind the camera or too close to draw"
-    rx = e.x - player.x
-    ry = e.y - player.y
-    dirX = Float.cos(player.angle)
-    dirY = Float.sin(player.angle)
-    depth = rx * dirX + ry * dirY
-    match depth < 0.3
-        true -> Option.None
-        false -> Option.Some(spriteAt(e.kind, depth, ry * dirX - rx * dirY))
-
-verify project
-    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3)) => Option.None
-    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 1.0, EnemyKind.Brute, 8)) => Option.Some(spriteAt(EnemyKind.Brute, 2.0, 0.0))
-    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 2.0, EnemyKind.Brute, 8)) => Option.Some(spriteAt(EnemyKind.Brute, 2.0, 1.0))
-
-fn insertFarFirst(s: Sprite, sorted: List<Sprite>, before: List<Sprite>) -> List<Sprite>
-    ? "Insert a sprite into a list ordered farthest first; before holds the farther ones already passed, nearest first"
-    match sorted
-        [] -> List.reverse(List.prepend(s, before))
-        [head, ..rest] -> match s.depth >= head.depth
-            true -> List.concat(List.reverse(before), List.prepend(s, sorted))
-            false -> insertFarFirst(s, rest, List.prepend(head, before))
-
-verify insertFarFirst
-    insertFarFirst(spriteAt(EnemyKind.Crawler, 2.0, 0.0), [], []) => [spriteAt(EnemyKind.Crawler, 2.0, 0.0)]
-    insertFarFirst(spriteAt(EnemyKind.Crawler, 2.0, 0.0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 2.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0)]
-    insertFarFirst(spriteAt(EnemyKind.Crawler, 0.5, 0.0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0), spriteAt(EnemyKind.Crawler, 0.5, 0.0)]
-    insertFarFirst(spriteAt(EnemyKind.Crawler, 9.0, 0.0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0)], []) => [spriteAt(EnemyKind.Crawler, 9.0, 0.0), spriteAt(EnemyKind.Crawler, 3.0, 0.0)]
-
-fn sprites(player: Player, enemies: List<Enemy>, acc: List<Sprite>) -> List<Sprite>
-    ? "Sprites of the enemies ahead of the camera, farthest first, so painting in order lets the near cover the far"
-    match enemies
-        [] -> acc
-        [e, ..rest] -> match project(player, e)
-            Option.Some(s) -> sprites(player, rest, insertFarFirst(s, acc, []))
-            Option.None -> sprites(player, rest, acc)
-
-verify sprites
-    sprites(Types.mkPlayer(1.0, 1.0), [], []) => []
-    sprites(Types.mkPlayer(1.0, 1.0), [Types.mkEnemy(3.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(5.0, 1.0, EnemyKind.Wisp, 4)], []) => [spriteAt(EnemyKind.Wisp, 4.0, 0.0), spriteAt(EnemyKind.Crawler, 2.0, 0.0)]
-
-fn inFront(cols: Vector<Column>, cx: Int, depth: Float) -> Bool
-    ? "Is something at this depth nearer than the wall in both dot columns of terminal column cx"
-    x0 = 2 * cx
-    Bool.and(columnAt(cols, x0).dist > depth, columnAt(cols, x0 + 1).dist > depth)
-
-verify inFront
-    inFront(Vector.fromList([Column.update(farColumn(), dist = 5.0), Column.update(farColumn(), dist = 5.0)]), 0, 3.0) => true
-    inFront(Vector.fromList([Column.update(farColumn(), dist = 5.0), Column.update(farColumn(), dist = 2.0)]), 0, 3.0) => false
-    inFront(Vector.fromList([Column.update(farColumn(), dist = 2.0), Column.update(farColumn(), dist = 5.0)]), 0, 3.0) => false
-
-fn spriteShows(s: Sprite, cols: Vector<Column>, cx: Int, cy: Int) -> Bool
-    ? "Is terminal cell (cx, cy) painted by this sprite: on screen, inside the silhouette, not behind a wall"
-    col = cx - s.left
-    row = cy - s.top
-    onScreen = Bool.and(Bool.and(cx >= 0, cx < screenW()), Bool.and(cy >= 0, cy < screenH()))
-    inRect = Bool.and(Bool.and(col >= 0, col < s.cols), Bool.and(row >= 0, row < s.rows))
-    match Bool.and(onScreen, inRect)
-        false -> false
-        true -> match Texture.isInsideShape(s.kind, col, row, s.cols, s.rows)
-            true -> inFront(cols, cx, s.depth)
-            false -> false
-
-verify spriteShows
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 10) => true
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 25) => false
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 20, 5) => false
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 17) => false
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 2) => false
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 45, 10) => false
-    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([Column.update(farColumn(), dist = 1.0)]), 0, 10) => false

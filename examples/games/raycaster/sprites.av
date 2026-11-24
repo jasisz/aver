@@ -1,0 +1,284 @@
+module Sprites
+    intent =
+        "Enemy sprites: where an enemy lands on screen, which Braille dots of it are lit,"
+        "and which of them a wall hides. Pure; Render prints the cells."
+    depends [Types, Texture, View, Shapes]
+    effects []
+
+decision SpritesTestedPerDotColumn
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "An enemy was drawn whole whenever its centre column was in front of the wall,"
+        "so one standing half behind a corner showed through the wall."
+        "Its distance was Euclidean while the wall's was a depth, so the comparison drifted toward the screen edges."
+        "Every dot of a sprite is now compared with the wall depth of its own dot column, both measured as depth:"
+        "a wall cuts an enemy along a clean vertical edge, one dot wide."
+        "Sprites are painted far to near so a near enemy covers a far one."
+    chosen = "DepthTestPerDot"
+    rejected = ["CentreColumnOnly", "DepthTestPerCell"]
+    impacts = [visibleAt, project, insertFarFirst]
+
+decision FigureHidesTheWallBehindIt
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "A terminal cell has one color, so a cell cannot hold wall dots and enemy dots at once."
+        "A cell touched by an enemy's figure shows only the enemy's dots; the wall dots in it go dark."
+        "Unlit parts of the figure, the eyes, stay dark for the same reason, and the dark rim"
+        "this leaves around a figure separates it from a wall of similar brightness."
+    chosen = "CellBelongsToTheFigure"
+    rejected = ["MergeDotsInWallColor", "FullBlockCells"]
+    impacts = [cellGlyph, cellBits]
+
+record Sprite
+    kind: EnemyKind
+    depth: Float
+    left: Int
+    top: Int
+    width: Int
+    height: Int
+    phase: Int
+
+fn spriteHeight(kind: EnemyKind) -> Float
+    ? "Height of an enemy in map units; a wall is 1 high"
+    match kind
+        EnemyKind.Crawler -> 0.45
+        EnemyKind.Brute -> 0.95
+        EnemyKind.Wisp -> 0.5
+
+verify spriteHeight
+    spriteHeight(EnemyKind.Crawler) => 0.45
+    spriteHeight(EnemyKind.Brute) => 0.95
+    spriteHeight(EnemyKind.Wisp) => 0.5
+
+fn spriteWidth(kind: EnemyKind) -> Float
+    ? "Width of an enemy in map units: twice the radius a shot hits it within"
+    match kind
+        EnemyKind.Crawler -> 0.8
+        EnemyKind.Brute -> 0.8
+        EnemyKind.Wisp -> 0.5
+
+verify spriteWidth
+    spriteWidth(EnemyKind.Crawler) => 0.8
+    spriteWidth(EnemyKind.Brute) => 0.8
+    spriteWidth(EnemyKind.Wisp) => 0.5
+
+fn spriteLift(kind: EnemyKind) -> Float
+    ? "How high above the floor an enemy's feet are: the wisp floats"
+    match kind
+        EnemyKind.Wisp -> 0.3
+        _ -> 0.0
+
+verify spriteLift
+    spriteLift(EnemyKind.Wisp) => 0.3
+    spriteLift(EnemyKind.Crawler) => 0.0
+
+fn spriteAt(kind: EnemyKind, depth: Float, side: Float, phase: Int) -> Sprite
+    ? "Screen rectangle, in dots, of an enemy depth ahead of the camera and side to its right"
+    unit = View.wallScale() / depth
+    height = Int.max(2, Float.round(spriteHeight(kind) * unit))
+    width = Int.max(2, Float.round(spriteWidth(kind) * unit))
+    feet = Float.fromInt(View.horizon()) + unit * (0.5 - spriteLift(kind))
+    centre = Float.fromInt(View.pixelW()) / 2.0 + side * unit
+    Sprite(kind = kind, depth = depth, left = Float.round(centre - Float.fromInt(width) / 2.0), top = Float.round(feet) - height, width = width, height = height, phase = phase)
+
+verify spriteAt
+    spriteAt(EnemyKind.Brute, 2.0, 0.0, 0).height => 43
+    spriteAt(EnemyKind.Brute, 2.0, 0.0, 0).width => 36
+    spriteAt(EnemyKind.Brute, 2.0, 0.0, 0).left => 42
+    spriteAt(EnemyKind.Brute, 2.0, 0.0, 0).top => 20
+    spriteAt(EnemyKind.Crawler, 90.0, 0.0, 0).height => 2
+    spriteAt(EnemyKind.Crawler, 90.0, 0.0, 0).width => 2
+    spriteAt(EnemyKind.Crawler, 4.0, 1.0, 0).left > spriteAt(EnemyKind.Crawler, 4.0, 0.0, 0).left => true
+    spriteAt(EnemyKind.Wisp, 2.0, 0.0, 0).top + spriteAt(EnemyKind.Wisp, 2.0, 0.0, 0).height < spriteAt(EnemyKind.Brute, 2.0, 0.0, 0).top + spriteAt(EnemyKind.Brute, 2.0, 0.0, 0).height => true
+
+fn project(player: Player, e: Enemy, phase: Int) -> Option<Sprite>
+    ? "The sprite of an enemy, unless it is behind the camera or too close to draw"
+    rx = e.x - player.x
+    ry = e.y - player.y
+    dirX = Float.cos(player.angle)
+    dirY = Float.sin(player.angle)
+    depth = rx * dirX + ry * dirY
+    match depth < 0.3
+        true -> Option.None
+        false -> Option.Some(spriteAt(e.kind, depth, ry * dirX - rx * dirY, phase))
+
+verify project
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3), 0) => Option.None
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 1.0, EnemyKind.Brute, 8), 5) => Option.Some(spriteAt(EnemyKind.Brute, 2.0, 0.0, 5))
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 2.0, EnemyKind.Brute, 8), 0) => Option.Some(spriteAt(EnemyKind.Brute, 2.0, 1.0, 0))
+
+fn insertFarFirst(s: Sprite, sorted: List<Sprite>, before: List<Sprite>) -> List<Sprite>
+    ? "Insert a sprite into a list ordered farthest first; before holds the farther ones already passed, nearest first"
+    match sorted
+        [] -> List.reverse(List.prepend(s, before))
+        [head, ..rest] -> match s.depth >= head.depth
+            true -> List.concat(List.reverse(before), List.prepend(s, sorted))
+            false -> insertFarFirst(s, rest, List.prepend(head, before))
+
+verify insertFarFirst
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 2.0, 0.0, 0), [], []) => [spriteAt(EnemyKind.Crawler, 2.0, 0.0, 0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 2.0, 0.0, 0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 1.0, 0.0, 0)], []) => [spriteAt(EnemyKind.Crawler, 3.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 2.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 1.0, 0.0, 0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 0.5, 0.0, 0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 1.0, 0.0, 0)], []) => [spriteAt(EnemyKind.Crawler, 3.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 1.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 0.5, 0.0, 0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 9.0, 0.0, 0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0, 0)], []) => [spriteAt(EnemyKind.Crawler, 9.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 3.0, 0.0, 0)]
+
+fn sprites(player: Player, enemies: List<Enemy>, phase: Int, acc: List<Sprite>) -> List<Sprite>
+    ? "Sprites of the enemies ahead of the camera, farthest first, so painting in order lets the near cover the far"
+    match enemies
+        [] -> acc
+        [e, ..rest] -> match project(player, e, phase)
+            Option.Some(s) -> sprites(player, rest, phase, insertFarFirst(s, acc, []))
+            Option.None -> sprites(player, rest, phase, acc)
+
+verify sprites
+    sprites(Types.mkPlayer(1.0, 1.0), [], 0, []) => []
+    sprites(Types.mkPlayer(1.0, 1.0), [Types.mkEnemy(3.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(5.0, 1.0, EnemyKind.Wisp, 4)], 0, []) => [spriteAt(EnemyKind.Wisp, 4.0, 0.0, 0), spriteAt(EnemyKind.Crawler, 2.0, 0.0, 0)]
+
+// ─── Dots ──────────────────────────────────────────────────────────────────
+
+fn visibleAt(s: Sprite, cols: Vector<Column>, x: Int, y: Int) -> Bool
+    ? "Is dot (x, y) inside the sprite's rectangle, on screen, and nearer than the wall of its column"
+    inRect = Bool.and(Bool.and(x >= s.left, x < s.left + s.width), Bool.and(y >= s.top, y < s.top + s.height))
+    onScreen = Bool.and(Bool.and(x >= 0, x < View.pixelW()), Bool.and(y >= 0, y < View.pixelH()))
+    match Bool.and(inRect, onScreen)
+        true -> View.columnAt(cols, x).dist > s.depth
+        false -> false
+
+verify visibleAt
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 40) => true
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 41, 40) => false
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 19) => false
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 63) => false
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0 - 1.0, 0), Vector.fromList([]), 0 - 1, 40) => false
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0 - 1.4, 0), Vector.fromList([Column.update(View.farColumn(), dist = 1.0), Column.update(View.farColumn(), dist = 5.0)]), 0, 40) => false
+    visibleAt(spriteAt(EnemyKind.Brute, 2.0, 0.0 - 1.4, 0), Vector.fromList([Column.update(View.farColumn(), dist = 1.0), Column.update(View.farColumn(), dist = 5.0)]), 1, 40) => true
+
+fn acrossAt(s: Sprite, x: Int) -> Float
+    ? "Where dot column x lies across the sprite: -1 at its left edge, 1 at its right"
+    Float.fromInt(2 * (x - s.left) + 1) / Float.fromInt(s.width) - 1.0
+
+verify acrossAt
+    acrossAt(Sprite(kind = EnemyKind.Wisp, depth = 1.0, left = 10, top = 0, width = 4, height = 4, phase = 0), 10) => 0.0 - 0.75
+    acrossAt(Sprite(kind = EnemyKind.Wisp, depth = 1.0, left = 10, top = 0, width = 4, height = 4, phase = 0), 13) => 0.75
+
+fn downAt(s: Sprite, y: Int) -> Float
+    ? "Where dot row y lies down the sprite: 0 at its top, 1 at its bottom"
+    (Float.fromInt(y - s.top) + 0.5) / Float.fromInt(s.height)
+
+verify downAt
+    downAt(Sprite(kind = EnemyKind.Wisp, depth = 1.0, left = 10, top = 20, width = 4, height = 4, phase = 0), 20) => 0.125
+    downAt(Sprite(kind = EnemyKind.Wisp, depth = 1.0, left = 10, top = 20, width = 4, height = 4, phase = 0), 23) => 0.875
+
+fn figureAt(s: Sprite, cols: Vector<Column>, x: Int, y: Int) -> Bool
+    ? "Does the enemy's figure, lit or dark, cover visible dot (x, y)"
+    match visibleAt(s, cols, x, y)
+        true -> Shapes.enemyMask(s.kind, acrossAt(s, x), downAt(s, y))
+        false -> false
+
+verify figureAt
+    figureAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 30) => true
+    figureAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 60) => false
+    figureAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 0, 30) => false
+
+fn fadeDepth() -> Float
+    ? "Depth from which a sprite is thinned: later than walls, which thin from 6, so an enemy stands out against the wall behind it"
+    9.0
+
+verify fadeDepth
+    fadeDepth() => 9.0
+
+fn litAt(s: Sprite, cols: Vector<Column>, x: Int, y: Int) -> Bool
+    ? "Is visible dot (x, y) lit by this sprite; far sprites keep every second dot, as far walls do"
+    match Bool.and(visibleAt(s, cols, x, y), Bool.or(s.depth < fadeDepth(), Int.mod(x + y, 2) == 0))
+        true -> Shapes.enemyDot(s.kind, acrossAt(s, x), downAt(s, y), s.height, x, y, s.phase)
+        false -> false
+
+verify litAt
+    litAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 32) => true
+    litAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 57, 24) => false
+    litAt(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 60, 60) => false
+    litAt(spriteAt(EnemyKind.Brute, 10.0, 0.0, 0), Vector.fromList([]), 60, 40) => true
+    litAt(spriteAt(EnemyKind.Brute, 10.0, 0.0, 0), Vector.fromList([]), 60, 41) => false
+
+// ─── Cells ─────────────────────────────────────────────────────────────────
+
+fn cellBits(s: Sprite, cols: Vector<Column>, cx: Int, cy: Int, i: Int, lit: Bool, acc: Int) -> Int
+    ? "Braille bits of terminal cell (cx, cy) from dot i on: the lit dots, or with lit unset every dot of the figure"
+    sub = Int.div(i, 4)
+    row = Int.mod(i, 4)
+    x = 2 * cx + sub
+    y = 4 * cy + row
+    on = match lit
+        true -> litAt(s, cols, x, y)
+        false -> figureAt(s, cols, x, y)
+    match i >= 8
+        true -> acc
+        false -> match on
+            true -> cellBits(s, cols, cx, cy, i + 1, lit, acc + Texture.dotBit(sub, row))
+            false -> cellBits(s, cols, cx, cy, i + 1, lit, acc)
+
+verify cellBits
+    cellBits(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 30, 8, 0, true, 0) => 255
+    cellBits(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 30, 8, 0, false, 0) => 255
+    cellBits(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 30, 8, 8, true, 7) => 7
+    cellBits(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 5, 8, 0, false, 0) => 0
+    cellBits(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 30, 15, 0, false, 0) => 0
+
+fn cellGlyph(s: Sprite, cols: Vector<Column>, cx: Int, cy: Int) -> Option<String>
+    ? "What the sprite puts in terminal cell (cx, cy): nothing where its figure is absent,"
+      "else the glyph of its lit dots, which is blank over a dark part of the figure"
+    match cellBits(s, cols, cx, cy, 0, false, 0)
+        0 -> Option.None
+        _ -> Option.Some(Texture.brailleChar(cellBits(s, cols, cx, cy, 0, true, 0)))
+
+verify cellGlyph
+    cellGlyph(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 30, 8) => Option.Some("⣿")
+    cellGlyph(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 5, 8) => Option.None
+    cellGlyph(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0), Vector.fromList([]), 30, 15) => Option.None
+
+fn spriteColor(s: Sprite) -> String
+    ? "Color of a sprite: one per kind, the wisp paling with distance"
+    match s.kind
+        EnemyKind.Wisp -> match s.depth < 6.0
+            true -> "white"
+            false -> "cyan"
+        _ -> Types.enemyColor(s.kind)
+
+verify spriteColor
+    spriteColor(spriteAt(EnemyKind.Wisp, 2.0, 0.0, 0)) => "white"
+    spriteColor(spriteAt(EnemyKind.Wisp, 8.0, 0.0, 0)) => "cyan"
+    spriteColor(spriteAt(EnemyKind.Crawler, 2.0, 0.0, 0)) => "red"
+    spriteColor(spriteAt(EnemyKind.Brute, 8.0, 0.0, 0)) => "magenta"
+
+fn firstCol(s: Sprite) -> Int
+    ? "First terminal column of the sprite that is on screen"
+    Int.max(0, Int.div(s.left, 2))
+
+verify firstCol
+    firstCol(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0)) => 21
+    firstCol(spriteAt(EnemyKind.Brute, 2.0, 0.0 - 3.0, 0)) => 0
+
+fn endCol(s: Sprite) -> Int
+    ? "Terminal column just past the on-screen part of the sprite"
+    Int.min(View.screenW(), Int.div(s.left + s.width + 1, 2))
+
+verify endCol
+    endCol(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0)) => 39
+    endCol(spriteAt(EnemyKind.Brute, 2.0, 3.0, 0)) => 60
+
+fn firstRow(s: Sprite) -> Int
+    ? "First terminal row of the sprite that is on screen"
+    Int.max(0, Int.div(s.top, 4))
+
+verify firstRow
+    firstRow(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0)) => 5
+    firstRow(spriteAt(EnemyKind.Brute, 0.4, 0.0, 0)) => 0
+
+fn endRow(s: Sprite) -> Int
+    ? "Terminal row just past the on-screen part of the sprite"
+    Int.min(View.screenH(), Int.div(s.top + s.height + 3, 4))
+
+verify endRow
+    endRow(spriteAt(EnemyKind.Brute, 2.0, 0.0, 0)) => 16
+    endRow(spriteAt(EnemyKind.Brute, 0.4, 0.0, 0)) => 20

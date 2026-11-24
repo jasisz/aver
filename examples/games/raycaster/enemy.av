@@ -92,16 +92,16 @@ verify enemyDamage
     enemyDamage(EnemyKind.Wisp) => 6
 
 fn hitRadius(kind: EnemyKind) -> Float
-    ? "How far from the centre of an enemy a shot still hits, matching the width it is drawn at"
+    ? "How far from the centre of an enemy a shot still hits: half the width it is drawn at"
     match kind
-        EnemyKind.Crawler -> 0.3
-        EnemyKind.Brute -> 0.45
-        EnemyKind.Wisp -> 0.35
+        EnemyKind.Crawler -> 0.4
+        EnemyKind.Brute -> 0.4
+        EnemyKind.Wisp -> 0.25
 
 verify hitRadius
-    hitRadius(EnemyKind.Crawler) => 0.3
-    hitRadius(EnemyKind.Brute) => 0.45
-    hitRadius(EnemyKind.Wisp) => 0.35
+    hitRadius(EnemyKind.Crawler) => 0.4
+    hitRadius(EnemyKind.Brute) => 0.4
+    hitRadius(EnemyKind.Wisp) => 0.25
 
 record Struck
     enemy: Enemy
@@ -299,8 +299,8 @@ fn inSights(e: Enemy, px: Float, py: Float, dx: Float, dy: Float, wallDist: Floa
 
 verify inSights
     inSights(Types.mkEnemy(4.0, 1.2, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => true
-    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
-    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Brute, 8), 1.0, 1.0, 1.0, 0.0, 6.0) => true
+    inSights(Types.mkEnemy(4.0, 1.3, EnemyKind.Wisp, 4), 1.0, 1.0, 1.0, 0.0, 6.0) => false
+    inSights(Types.mkEnemy(4.0, 1.3, EnemyKind.Brute, 8), 1.0, 1.0, 1.0, 0.0, 6.0) => true
     inSights(Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 2.5) => false
     inSights(Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
 

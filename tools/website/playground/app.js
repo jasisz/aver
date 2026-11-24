@@ -4069,7 +4069,7 @@ const GAME_SOURCES = {
     tetris:   ["examples/games/tetris/pieces.av", "examples/games/tetris/board.av", "examples/games/tetris/logic.av", "examples/games/tetris/main.av"],
     checkers: ["examples/games/checkers/board.av", "examples/games/checkers/rules.av", "examples/games/checkers/ai.av", "examples/games/checkers/render.av", "examples/games/checkers/main.av"],
     rogue:    ["examples/games/rogue/types.av", "examples/games/rogue/map.av", "examples/games/rogue/fov.av", "examples/games/rogue/combat.av", "examples/games/rogue/pathfinding.av", "examples/games/rogue/render.av", "examples/games/rogue/main.av"],
-    raycaster: ["examples/games/raycaster/types.av", "examples/games/raycaster/math.av", "examples/games/raycaster/rng.av", "examples/games/raycaster/tiles.av", "examples/games/raycaster/level.av", "examples/games/raycaster/ray.av", "examples/games/raycaster/enemy.av", "examples/games/raycaster/texture.av", "examples/games/raycaster/view.av", "examples/games/raycaster/render.av", "examples/games/raycaster/main.av"],
+    raycaster: ["examples/games/raycaster/types.av", "examples/games/raycaster/math.av", "examples/games/raycaster/rng.av", "examples/games/raycaster/tiles.av", "examples/games/raycaster/level.av", "examples/games/raycaster/ray.av", "examples/games/raycaster/enemy.av", "examples/games/raycaster/texture.av", "examples/games/raycaster/view.av", "examples/games/raycaster/shapes.av", "examples/games/raycaster/sprites.av", "examples/games/raycaster/render.av", "examples/games/raycaster/main.av"],
     eggcatch: ["examples/games/eggcatch/core.av", "examples/games/eggcatch/main.av"],
 };
 
