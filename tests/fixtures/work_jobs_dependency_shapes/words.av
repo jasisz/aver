@@ -1,0 +1,33 @@
+module Words
+    intent = "Dependency types a job's task reaches: a machine-word refinement, a one-field record and a sum held in a vector."
+    exposes [wordOf, wordValue, Label, Mark]
+    exposes opaque [Word]
+    depends []
+    effects []
+
+record Word
+    value: Int
+
+record Label
+    text: String
+
+type Mark
+    Plain(Int)
+    Nested(Vector<Mark>)
+
+fn wordOf(n: Int) -> Result<Word, String>
+    ? "A word: at least 0 and at most 2^62 - 1."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+verify wordOf
+    wordOf(7) => Word(value = 7)
+    wordOf(-1) => Result.Err("word out of range")
+
+fn wordValue(w: Word) -> Int
+    ? "The Int a word is."
+    w.value
+
+verify wordValue
+    wordValue(Word(value = 3)) => 3

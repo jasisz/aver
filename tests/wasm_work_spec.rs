@@ -200,6 +200,41 @@ fn a_job_kind_naming_nested_dependency_types_matches_the_vm_on_wasm_gc() {
     assert_eq!(wasm, "decoded block of 3 bytes from node");
 }
 
+/// A job kind's task and answer reach dependency types of the shapes the
+/// wasm-gc program does not keep as a struct of their own name: a
+/// refinement held as a raw `i64` (`Words.Word`), a record of one field
+/// erased to that field (`Words.Label`), and a `Vector<Words.Mark>` the
+/// flattened program spells `Vector<Mark>`. The host ABI the recorder reads
+/// them through builds and reads each as the contract lays it out, so the
+/// module validates, runs as the VM does, and a recording made on either
+/// replays on the other.
+#[test]
+fn a_job_kind_reaching_carriers_newtypes_and_vectors_records_on_wasm_gc() {
+    let name = "work_jobs_dependency_shapes";
+    assert_same_stdout(name, &["--wasm-gc"]);
+    let wasm = run(name, &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(wasm, "top: word 4611686018427387903, marks 15");
+    let ws = temp_dir("dependency-shapes");
+    let result = (|| -> Result<(), String> {
+        for (made, replayed) in [(&["--wasm-gc"][..], &[][..]), (&[][..], &["--wasm-gc"][..])] {
+            let recordings = ws.join(format!("{}-{}", target_name(made), target_name(replayed)));
+            fs::create_dir_all(&recordings).expect("create recordings dir");
+            record(name, made, &recordings)?;
+            let report = replay(&recordings, replayed)?;
+            if !report.contains("Output:  MATCH") {
+                return Err(format!(
+                    "a recording made on {} did not replay on {}:\n{report}",
+                    target_name(made),
+                    target_name(replayed)
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// A dependency's records carry `Bytes` across the job boundary: the task
 /// holds one, the answer a `List<Bytes>` and a `Map<Bytes, Ledger.Chunk>`.
 /// `Bytes` is the compiler's type in every module, never `Ledger.Bytes`, and

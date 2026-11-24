@@ -1,0 +1,16 @@
+module Shapes
+    kind = capability
+    semantics = effectful
+    depends [Work, Jobs]
+    intent = "One job kind whose task and answer reach a refinement, a one-field record and a vector of a sum through another module."
+    exposes [begin, take]
+
+operation begin(task: Jobs.Task) -> Result<Work.Job, String>
+    ? "Starts one job off the turn."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Jobs.Report>, String>
+    ? "Collects one finished job."
+    oracle = generativeOutput
+    replay = recorded

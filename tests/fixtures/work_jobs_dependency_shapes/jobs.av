@@ -1,0 +1,15 @@
+module Jobs
+    depends [Words]
+    intent = "The task and the answer of a job, holding dependency types of several shapes."
+    exposes [Task, Report]
+    effects []
+
+record Task
+    seed: Words.Word
+    label: Words.Label
+    marks: Vector<Words.Mark>
+
+record Report
+    word: Words.Word
+    label: Words.Label
+    total: Int

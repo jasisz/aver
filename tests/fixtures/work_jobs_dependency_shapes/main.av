@@ -1,0 +1,16 @@
+module Main
+    depends [Jobs, Node, Shapes, Wait, Work, Words]
+    intent = "Runs one job whose task and answer reach dependency types of several shapes, and prints the answer."
+    exposes [main]
+    effects [Console.print, Shapes.begin, Shapes.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Begins one job, waits for it and prints what it answered."
+    ! [Console.print, Shapes.begin, Shapes.take, Wait.poll]
+    marks = Vector.fromList([Words.Mark.Plain(4), Words.Mark.Nested(Vector.fromList([Words.Mark.Plain(5), Words.Mark.Plain(6)]))])
+    job = Shapes.begin(Jobs.Task(seed = Words.wordOf(4611686018427387903), label = Words.Label(text = "top"), marks = marks))?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(job)}
+    _ready = Wait.poll(pending, 5000)?
+    match Shapes.take(job)?
+        Option.None -> Result.Err("not ready")
+        Option.Some(r) -> Result.Ok(Console.print("{r.label.text}: word {Words.wordValue(r.word)}, marks {r.total}"))

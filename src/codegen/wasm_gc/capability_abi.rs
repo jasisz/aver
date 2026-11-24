@@ -56,6 +56,9 @@ enum HelperKind {
         type_idx: u32,
     },
     ListIsEmpty,
+    /// The value itself: the make and the field of a record erased to its
+    /// one field.
+    Identity,
     VectorNew {
         slots: super::types::VectorSlots,
     },
@@ -413,15 +416,20 @@ impl CapabilityAbi {
                 }
             }
             Type::Vector(inner) => {
-                let compact = canonical.replace(' ', "");
+                // The spelling the registry holds: a contract writes a
+                // dependency's element type `Module.Type` where the flattened
+                // program wrote it bare.
                 let lacks =
                     || WasmGcError::Validation(format!("capability ABI lacks `{canonical}` slot"));
+                let registered = registry
+                    .registered_vector_spelling(&canonical)
+                    .ok_or_else(lacks)?;
                 let slots = registry
                     .vector_versions
-                    .get(&compact)
+                    .get(&registered)
                     .copied()
                     .ok_or_else(lacks)?;
-                let current = (collection_helpers.vector_current)(&compact).ok_or_else(lacks)?;
+                let current = (collection_helpers.vector_current)(&registered).ok_or_else(lacks)?;
                 let vector = value(ty)?.expect("Vector has a wasm value");
                 let inner = value(inner)?;
                 push(
@@ -525,6 +533,48 @@ impl CapabilityAbi {
                         ),
                         helpers.unpack,
                     ));
+                } else if registry.newtype_underlying(name).is_some()
+                    && let Some([(field_name, field_type)]) = registry
+                        .record_fields
+                        .get(name)
+                        .or_else(|| {
+                            name.rsplit_once('.')
+                                .and_then(|(_, bare)| registry.record_fields.get(bare))
+                        })
+                        .map(Vec::as_slice)
+                {
+                    // A record of one primitive field is that field in the
+                    // program (newtype erasure), and a carrier of a proven
+                    // bound is a raw `i64`: there is no struct to build or
+                    // read. The host still builds it from its field and
+                    // reads the field back, by the same two exports.
+                    let field_export = format!(
+                        "{stem}_field_{}",
+                        crate::codegen::wasip2::plan::encode_interface_identifier(field_name)
+                    );
+                    if registry.is_eligible_carrier(name) {
+                        let helpers = int_helpers.ok_or_else(|| {
+                            WasmGcError::Validation(format!(
+                                "capability ABI carries `{name}` without full-ℤ host bridges"
+                            ))
+                        })?;
+                        self.aliases
+                            .push((format!("{stem}_make"), helpers.to_i64_checked));
+                        self.aliases.push((field_export, helpers.from_i64));
+                    } else if let Some(field_value) = aver_to_wasm(field_type, Some(registry))? {
+                        push(
+                            format!("{stem}_make"),
+                            vec![field_value],
+                            vec![field_value],
+                            HelperKind::Identity,
+                        );
+                        push(
+                            field_export,
+                            vec![field_value],
+                            vec![field_value],
+                            HelperKind::Identity,
+                        );
+                    }
                 } else if let Some(type_idx) = registry.record_type_idx(name) {
                     let fields = registry
                         .record_fields
@@ -940,6 +990,9 @@ fn emit_helper(function: &mut Function, kind: &HelperKind) {
         HelperKind::ListIsEmpty => {
             function.instruction(&Instruction::LocalGet(0));
             function.instruction(&Instruction::RefIsNull);
+        }
+        HelperKind::Identity => {
+            function.instruction(&Instruction::LocalGet(0));
         }
         HelperKind::VectorNew { slots } => {
             function.instruction(&Instruction::LocalGet(0));

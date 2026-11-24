@@ -1,0 +1,28 @@
+module Node
+    depends [Jobs, Words]
+    intent = "The pure function one job runs."
+    exposes [walk]
+    effects []
+
+fn walk(task: Jobs.Task) -> Jobs.Report
+    ? "Sums the marks and hands the word and the label back."
+    Jobs.Report(word = task.seed, label = task.label, total = sumMarks(task.marks, 0, 0))
+
+fn sumMarks(ms: Vector<Words.Mark>, i: Int, acc: Int) -> Int
+    ? "Plain marks from position i on count their value, nested ones their own marks."
+    match Vector.get(ms, i)
+        Option.None -> acc
+        Option.Some(m) -> sumMarks(ms, i + 1, markTotal(m, acc))
+
+fn markTotal(m: Words.Mark, acc: Int) -> Int
+    ? "One mark added to acc."
+    match m
+        Words.Mark.Plain(n) -> acc + n
+        Words.Mark.Nested(v) -> sumMarks(v, 0, acc)
+
+verify sumMarks
+    sumMarks(Vector.fromList([]), 0, 0) => 0
+    sumMarks(Vector.fromList([Words.Mark.Plain(2), Words.Mark.Nested(Vector.fromList([Words.Mark.Plain(3)]))]), 0, 1) => 6
+
+verify markTotal
+    markTotal(Words.Mark.Plain(2), 1) => 3
