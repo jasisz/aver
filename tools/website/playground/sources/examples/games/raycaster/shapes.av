@@ -1,0 +1,205 @@
+module Shapes
+    intent =
+        "What the three enemies look like, as functions of a point on the sprite:"
+        "u across it from -1 to 1, v down it from 0 to 1."
+        "The crawler is low and wide on six legs, the brute a block of shoulders with hanging arms,"
+        "the wisp a bright core in a flickering halo."
+    depends [Types]
+    effects []
+
+decision ShapesAsFunctionsOfThePoint
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "Enemies were one half-width per height, filled with full blocks in terminal cells:"
+        "three blobs that differed mostly in color, with no legs, arms or eyes, and staircase edges."
+        "A shape is now a predicate on a point of the sprite, sampled once per Braille dot,"
+        "so the same definition serves every size without a bitmap to scale."
+        "Detail that needs room is switched by the sprite's height in dots:"
+        "eyes appear when the enemy is near, limbs at middle distance,"
+        "and a far enemy is a plain lump of the right proportions instead of noise."
+    chosen = "PredicatePerDot"
+    rejected = ["HalfWidthPerRowInFullBlocks", "FixedBitmapScaled"]
+    impacts = [enemyDot, enemyMask, simpleDot]
+
+fn limbHeight() -> Int
+    ? "Sprite height in dots from which limbs are drawn; below it the enemy is a plain lump"
+    8
+
+verify limbHeight
+    limbHeight() => 8
+
+fn faceHeight() -> Int
+    ? "Sprite height in dots from which eyes are drawn"
+    18
+
+verify faceHeight
+    faceHeight() => 18
+
+fn between(x: Float, lo: Float, hi: Float) -> Bool
+    ? "Is x in [lo, hi)"
+    Bool.and(x >= lo, x < hi)
+
+verify between
+    between(0.5, 0.0, 1.0) => true
+    between(1.0, 0.0, 1.0) => false
+    between(0.0, 0.0, 1.0) => true
+
+// ─── Crawler ───────────────────────────────────────────────────────────────
+
+fn crawlerMask(u: Float, v: Float) -> Bool
+    ? "Crawler: a domed shell over three pairs of legs that splay outward toward the ground"
+    a = Float.abs(u)
+    rise = (0.6 - v) / 0.5
+    leg = a - (v - 0.6) * 0.35
+    match v < 0.6
+        true -> Bool.and(rise <= 1.0, a < 0.8 * Float.sqrt(Float.max(0.0, 1.0 - rise * rise)))
+        false -> Bool.or(between(leg, 0.08, 0.26), Bool.or(between(leg, 0.4, 0.56), between(leg, 0.7, 0.86)))
+
+verify crawlerMask
+    crawlerMask(0.0, 0.3) => true
+    crawlerMask(0.0, 0.05) => false
+    crawlerMask(0.9, 0.3) => false
+    crawlerMask(0.7, 0.55) => true
+    crawlerMask(0.0, 0.8) => false
+    crawlerMask(0.2, 0.8) => true
+    crawlerMask(0.0 - 0.2, 0.8) => true
+    crawlerMask(0.35, 0.8) => false
+    crawlerMask(0.9, 0.95) => true
+
+fn crawlerEye(u: Float, v: Float) -> Bool
+    ? "The crawler's two eyes, low on the shell"
+    Bool.and(between(Float.abs(u), 0.18, 0.38), between(v, 0.34, 0.47))
+
+verify crawlerEye
+    crawlerEye(0.3, 0.4) => true
+    crawlerEye(0.0 - 0.3, 0.4) => true
+    crawlerEye(0.0, 0.4) => false
+    crawlerEye(0.3, 0.2) => false
+
+// ─── Brute ─────────────────────────────────────────────────────────────────
+
+fn bruteMask(u: Float, v: Float) -> Bool
+    ? "Brute: a small head sunk between sloping shoulders, a barrel chest, arms hanging clear of it, two thick legs"
+    a = Float.abs(u)
+    match v < 0.16
+        true -> a < 0.3
+        false -> match v < 0.42
+            true -> a < Float.min(1.0, 0.62 + (v - 0.16) * 2.4)
+            false -> match v < 0.74
+                true -> Bool.or(a < 0.6, between(a, 0.74, 1.0))
+                false -> between(a, 0.1, 0.56)
+
+verify bruteMask
+    bruteMask(0.0, 0.1) => true
+    bruteMask(0.5, 0.1) => false
+    bruteMask(0.95, 0.4) => true
+    bruteMask(0.95, 0.18) => false
+    bruteMask(0.3, 0.6) => true
+    bruteMask(0.67, 0.6) => false
+    bruteMask(0.9, 0.6) => true
+    bruteMask(0.0, 0.9) => false
+    bruteMask(0.3, 0.9) => true
+    bruteMask(0.0 - 0.3, 0.9) => true
+    bruteMask(0.9, 0.9) => false
+
+fn bruteEye(u: Float, v: Float) -> Bool
+    ? "The brute's eyes: two slits in the head"
+    Bool.and(between(Float.abs(u), 0.07, 0.24), between(v, 0.06, 0.12))
+
+verify bruteEye
+    bruteEye(0.15, 0.09) => true
+    bruteEye(0.0, 0.09) => false
+    bruteEye(0.15, 0.3) => false
+
+// ─── Wisp ──────────────────────────────────────────────────────────────────
+
+fn wispRadius(u: Float, v: Float) -> Float
+    ? "Distance of a point from the wisp's centre, 1 at the rim of its halo"
+    dv = (v - 0.5) * 2.0
+    Float.sqrt(u * u + dv * dv)
+
+verify wispRadius
+    wispRadius(0.0, 0.5) => 0.0
+    wispRadius(1.0, 0.5) => 1.0
+    wispRadius(0.0, 1.0) => 1.0
+
+fn wispDot(u: Float, v: Float, x: Int, y: Int, phase: Int, face: Bool) -> Bool
+    ? "Wisp: a solid core, dark at the very centre when near, inside a halo of every second dot;"
+      "which dots are lit swaps with the phase, so the halo flickers from turn to turn"
+    r = wispRadius(u, v)
+    match r < 0.55
+        true -> Bool.not(Bool.and(face, r < 0.2))
+        false -> Bool.and(r < 1.0, Int.mod(x + y + phase, 2) == 0)
+
+verify wispDot
+    wispDot(0.4, 0.5, 0, 0, 0, true) => true
+    wispDot(0.0, 0.5, 0, 0, 0, true) => false
+    wispDot(0.0, 0.5, 0, 0, 0, false) => true
+    wispDot(0.8, 0.5, 0, 0, 0, true) => true
+    wispDot(0.8, 0.5, 1, 0, 0, true) => false
+    wispDot(0.8, 0.5, 1, 0, 1, true) => true
+    wispDot(0.9, 0.9, 0, 0, 0, true) => false
+
+// ─── Any enemy ─────────────────────────────────────────────────────────────
+
+fn enemyMask(kind: EnemyKind, u: Float, v: Float) -> Bool
+    ? "Does the point belong to the enemy's figure, lit or not: what the figure hides of the wall behind it"
+    match kind
+        EnemyKind.Crawler -> crawlerMask(u, v)
+        EnemyKind.Brute -> bruteMask(u, v)
+        EnemyKind.Wisp -> wispRadius(u, v) < 1.0
+
+verify enemyMask
+    enemyMask(EnemyKind.Crawler, 0.0, 0.3) => true
+    enemyMask(EnemyKind.Crawler, 0.0, 0.8) => false
+    enemyMask(EnemyKind.Brute, 0.9, 0.9) => false
+    enemyMask(EnemyKind.Brute, 0.0, 0.3) => true
+    enemyMask(EnemyKind.Wisp, 0.0, 0.5) => true
+    enemyMask(EnemyKind.Wisp, 0.9, 0.9) => false
+
+fn simpleDot(kind: EnemyKind, u: Float, v: Float) -> Bool
+    ? "The figure of a far enemy, a few dots tall: a low slab, an upright block, a round spot"
+    match kind
+        EnemyKind.Crawler -> v >= 0.3
+        EnemyKind.Brute -> Bool.or(v >= 0.2, Float.abs(u) < 0.4)
+        EnemyKind.Wisp -> wispRadius(u, v) < 0.9
+
+verify simpleDot
+    simpleDot(EnemyKind.Crawler, 0.9, 0.5) => true
+    simpleDot(EnemyKind.Crawler, 0.0, 0.1) => false
+    simpleDot(EnemyKind.Brute, 0.9, 0.5) => true
+    simpleDot(EnemyKind.Brute, 0.9, 0.1) => false
+    simpleDot(EnemyKind.Brute, 0.0, 0.1) => true
+    simpleDot(EnemyKind.Wisp, 0.0, 0.5) => true
+    simpleDot(EnemyKind.Wisp, 0.9, 0.9) => false
+
+fn detailedDot(kind: EnemyKind, u: Float, v: Float, x: Int, y: Int, phase: Int, face: Bool) -> Bool
+    ? "Is the point lit on an enemy big enough for limbs, with eyes left dark when face is set"
+    match kind
+        EnemyKind.Crawler -> Bool.and(crawlerMask(u, v), Bool.not(Bool.and(face, crawlerEye(u, v))))
+        EnemyKind.Brute -> Bool.and(bruteMask(u, v), Bool.not(Bool.and(face, bruteEye(u, v))))
+        EnemyKind.Wisp -> wispDot(u, v, x, y, phase, face)
+
+verify detailedDot
+    detailedDot(EnemyKind.Crawler, 0.3, 0.4, 0, 0, 0, true) => false
+    detailedDot(EnemyKind.Crawler, 0.3, 0.4, 0, 0, 0, false) => true
+    detailedDot(EnemyKind.Brute, 0.15, 0.09, 0, 0, 0, true) => false
+    detailedDot(EnemyKind.Brute, 0.15, 0.09, 0, 0, 0, false) => true
+    detailedDot(EnemyKind.Brute, 0.67, 0.6, 0, 0, 0, false) => false
+    detailedDot(EnemyKind.Wisp, 0.8, 0.5, 1, 0, 1, true) => true
+
+fn enemyDot(kind: EnemyKind, u: Float, v: Float, height: Int, x: Int, y: Int, phase: Int) -> Bool
+    ? "Is screen dot (x, y) lit, lying at (u, v) on an enemy drawn height dots tall"
+    match height < limbHeight()
+        true -> simpleDot(kind, u, v)
+        false -> detailedDot(kind, u, v, x, y, phase, height >= faceHeight())
+
+verify enemyDot
+    enemyDot(EnemyKind.Crawler, 0.0, 0.8, 4, 0, 0, 0) => true
+    enemyDot(EnemyKind.Crawler, 0.0, 0.8, 12, 0, 0, 0) => false
+    enemyDot(EnemyKind.Crawler, 0.3, 0.4, 12, 0, 0, 0) => true
+    enemyDot(EnemyKind.Crawler, 0.3, 0.4, 30, 0, 0, 0) => false
+    enemyDot(EnemyKind.Brute, 0.15, 0.09, 30, 0, 0, 0) => false
+    enemyDot(EnemyKind.Wisp, 0.0, 0.5, 30, 0, 0, 0) => false
+    enemyDot(EnemyKind.Wisp, 0.0, 0.5, 10, 0, 0, 0) => true

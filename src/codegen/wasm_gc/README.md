@@ -30,7 +30,7 @@ Generic constructor stamps are resolved in the type checker before codegen. `bod
 | `wumpus.av` | ✅ | 7218 B |
 | `tetris/main.av` | ✅ | 11201 B |
 | `checkers/main.av` | ✅ | 26505 B |
-| `doom/main.av` | ✅ | 23618 B |
+| `raycaster/main.av` | ✅ | 23618 B |
 | `rogue/main.av` | ✅ | 33631 B |
 
 All seven games compile and validate. The blockers (sum-type equality, nullability cascade, empty-list call-arg stamp) were closed by per-subsystem fixes: `body/eq_helpers.rs` for sum/record `==`, `body/builtins.rs` `emit_map_kv_call` shim cleanup, and `infer/expr.rs` bidirectional propagation of expected types into generic constructors and collection literals. Full playground migration to `--target wasm-gc` (`tools/website/playground`, currently `--target edge-wasm`) is a separate workstream — the backend itself is no longer the blocker.

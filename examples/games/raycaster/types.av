@@ -1,0 +1,142 @@
+module Types
+    intent =
+        "Shared data types for Braille Raycaster: the level grid, player, enemies,"
+        "game state, ray hits, and small helpers on them."
+    depends []
+    effects []
+
+type WallType
+    Stone
+    Brick
+    Metal
+
+type Face
+    EastWest
+    NorthSouth
+
+type EnemyKind
+    Crawler
+    Brute
+    Wisp
+
+type Status
+    Playing
+    Dead
+    Cleared
+
+record Grid
+    width: Int
+    height: Int
+    cells: Vector<Int>
+
+record Enemy
+    x: Float
+    y: Float
+    kind: EnemyKind
+    hp: Int
+    cooldown: Int
+    alert: Int
+    seenX: Float
+    seenY: Float
+
+record Player
+    x: Float
+    y: Float
+    angle: Float
+    hp: Int
+
+record GameState
+    grid: Grid
+    player: Player
+    enemies: List<Enemy>
+    seed: Int
+    messages: List<String>
+    status: Status
+    turnCount: Int
+
+record RayHit
+    dist: Float
+    face: Face
+    wallType: WallType
+    u: Float
+
+fn maxHp() -> Int
+    ? "Player health at the start of a level"
+    100
+
+verify maxHp
+    maxHp() => 100
+
+fn mkPlayer(px: Float, py: Float) -> Player
+    ? "Create a player at a position, facing east, at full health"
+    Player(x = px, y = py, angle = 0.0, hp = maxHp())
+
+verify mkPlayer
+    mkPlayer(5.0, 5.0).hp => 100
+    mkPlayer(3.0, 4.0).x => 3.0
+
+fn mkEnemy(ex: Float, ey: Float, kind: EnemyKind, hp: Int) -> Enemy
+    ? "Create an idle enemy: it has not noticed the player yet"
+    Enemy(x = ex, y = ey, kind = kind, hp = hp, cooldown = 0, alert = 0, seenX = ex, seenY = ey)
+
+verify mkEnemy
+    mkEnemy(2.0, 3.0, EnemyKind.Crawler, 3).hp => 3
+    mkEnemy(2.0, 3.0, EnemyKind.Brute, 8).kind => EnemyKind.Brute
+    mkEnemy(2.0, 3.0, EnemyKind.Brute, 8).alert => 0
+
+fn enemyName(kind: EnemyKind) -> String
+    ? "Name of an enemy kind as used in messages"
+    match kind
+        EnemyKind.Crawler -> "crawler"
+        EnemyKind.Brute -> "brute"
+        EnemyKind.Wisp -> "wisp"
+
+verify enemyName
+    enemyName(EnemyKind.Crawler) => "crawler"
+    enemyName(EnemyKind.Brute) => "brute"
+    enemyName(EnemyKind.Wisp) => "wisp"
+
+fn enemyColor(kind: EnemyKind) -> String
+    ? "Terminal color for enemy kind"
+    match kind
+        EnemyKind.Crawler -> "red"
+        EnemyKind.Brute -> "magenta"
+        EnemyKind.Wisp -> "white"
+
+verify enemyColor
+    enemyColor(EnemyKind.Crawler) => "red"
+    enemyColor(EnemyKind.Brute) => "magenta"
+    enemyColor(EnemyKind.Wisp) => "white"
+
+fn enemyMaxHp(kind: EnemyKind) -> Int
+    ? "Default HP for enemy kind"
+    match kind
+        EnemyKind.Crawler -> 3
+        EnemyKind.Brute -> 8
+        EnemyKind.Wisp -> 4
+
+verify enemyMaxHp
+    enemyMaxHp(EnemyKind.Crawler) => 3
+    enemyMaxHp(EnemyKind.Brute) => 8
+    enemyMaxHp(EnemyKind.Wisp) => 4
+
+fn dirArrow(angle: Float) -> String
+    ? "Arrow for the minimap: one of 8 directions, the map's y axis pointing down"
+    match Int.mod(Float.round(angle * 4.0 / Float.pi()), 8)
+        0 -> "→"
+        1 -> "↘"
+        2 -> "↓"
+        3 -> "↙"
+        4 -> "←"
+        5 -> "↖"
+        6 -> "↑"
+        _ -> "↗"
+
+verify dirArrow
+    dirArrow(0.0) => "→"
+    dirArrow(Float.pi() / 2.0) => "↓"
+    dirArrow(Float.pi()) => "←"
+    dirArrow(Float.pi() * 1.5) => "↑"
+    dirArrow(Float.pi() / 4.0) => "↘"
+    dirArrow(Float.pi() * 1.75) => "↗"
+    dirArrow(Float.pi() * 1.99) => "→"

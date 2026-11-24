@@ -1,0 +1,254 @@
+module View
+    intent =
+        "The pure half of the renderer: the camera, one wall column per horizontal Braille dot,"
+        "and terminal rows as colored runs of glyphs."
+    depends [Types, Tiles, Ray, Texture]
+    effects []
+
+decision RayPerDotColumn
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "A Braille cell is two dots wide, but one ray was cast per cell"
+        "and the left and right dot columns only marked which face was hit."
+        "Half of the horizontal resolution carried no geometry."
+        "One ray per dot column gives 120 columns in 60 cells; the face is shown by color instead."
+    chosen = "OneRayPerDot"
+    rejected = ["OneRayPerCell"]
+    impacts = [column, columns, cellGlyph]
+
+decision CameraPlaneProjection
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "Rays were spaced by equal angles and the heights corrected with a cosine:"
+        "straight walls bowed toward the screen edges."
+        "A wall was 80 / distance dots tall whatever the width of the view, so tiles looked squat."
+        "Rays through equally spaced points of a camera plane keep straight walls straight."
+        "A terminal cell is twice as tall as wide and holds 2 x 4 dots, so dots are square"
+        "and one scale serves both axes: a tile is drawn as tall as it is wide."
+    chosen = "CameraPlane"
+    rejected = ["EqualAnglesWithCosine"]
+    impacts = [column, wallScale]
+// ─── Screen and camera ─────────────────────────────────────────────────────
+
+fn screenW() -> Int
+    ? "Terminal columns of the 3D viewport"
+    60
+
+verify screenW
+    screenW() => 60
+
+fn screenH() -> Int
+    ? "Terminal rows of the 3D viewport"
+    20
+
+verify screenH
+    screenH() => 20
+
+fn pixelW() -> Int
+    ? "Viewport width in dots: two per terminal column"
+    2 * screenW()
+
+verify pixelW
+    pixelW() => 120
+
+fn pixelH() -> Int
+    ? "Viewport height in dots: four per terminal row"
+    4 * screenH()
+
+verify pixelH
+    pixelH() => 80
+
+fn horizon() -> Int
+    ? "Dot row of the horizon"
+    Int.div(pixelH(), 2)
+
+verify horizon
+    horizon() => 40
+
+fn planeLen() -> Float
+    ? "Half-width of the camera plane one unit ahead: the tangent of half the field of view (about 67 degrees)"
+    0.66
+
+verify planeLen
+    planeLen() => 0.66
+
+fn wallScale() -> Float
+    ? "Dots that one map unit spans on screen at depth 1"
+    Float.fromInt(pixelW()) / 2.0 / planeLen()
+
+verify wallScale
+    Float.round(wallScale()) => 91
+
+record Column
+    dist: Float
+    top: Int
+    bottom: Int
+    hit: RayHit
+
+record Run
+    color: String
+    text: String
+
+// ─── Wall columns ──────────────────────────────────────────────────────────
+
+fn farColumn() -> Column
+    ? "A column with no wall in it"
+    mid = horizon()
+    Column(dist = 1.0e30, top = mid, bottom = mid, hit = RayHit(dist = 1.0e30, face = Face.EastWest, wallType = WallType.Stone, u = 0.0))
+
+verify farColumn
+    farColumn().top => 40
+    farColumn().bottom => 40
+
+fn column(grid: Grid, player: Player, x: Int) -> Column
+    ? "Cast the camera ray through dot column x and measure the wall it hits"
+    camX = Float.fromInt(2 * x + 1) / Float.fromInt(pixelW()) - 1.0
+    dirX = Float.cos(player.angle)
+    dirY = Float.sin(player.angle)
+    across = planeLen() * camX
+    hit = Ray.cast(grid, player.x, player.y, dirX - dirY * across, dirY + dirX * across)
+    half = wallScale() / Float.max(hit.dist, 0.05) / 2.0
+    mid = Float.fromInt(horizon())
+    Column(dist = hit.dist, top = Float.round(mid - half), bottom = Float.round(mid + half), hit = hit)
+
+verify column
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).dist => 4.5
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).top => 30
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).bottom => 50
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).hit.face => Face.EastWest
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 0).hit.face => Face.NorthSouth
+
+verify column law flatWallHasOneDepth
+    given x: Int = 0..119
+    Float.round(column(Tiles.gridOf(["###############", "#.............#", "#.............#", "#.............#", "###############"]), Player(x = 7.5, y = 3.5, angle = 0.0 - Float.pi() / 2.0, hp = 100), x).dist * 1000.0) => 2500
+
+fn columns(grid: Grid, player: Player, x: Int, acc: List<Column>) -> Vector<Column>
+    ? "All wall columns of a frame, left to right"
+    match x >= pixelW()
+        true -> Vector.fromList(List.reverse(acc))
+        false -> columns(grid, player, x + 1, List.prepend(column(grid, player, x), acc))
+
+verify columns
+    Vector.len(columns(Tiles.gridOf(["#####", "#...#", "#####"]), Types.mkPlayer(1.5, 1.5), 0, [])) => 120
+    Vector.len(columns(Tiles.gridOf(["#####", "#...#", "#####"]), Types.mkPlayer(1.5, 1.5), 120, [])) => 0
+
+fn columnAt(cols: Vector<Column>, x: Int) -> Column
+    ? "Column x of a frame; an empty column outside it"
+    Option.withDefault(Vector.get(cols, x), farColumn())
+
+verify columnAt
+    columnAt(Vector.fromList([]), 3) => farColumn()
+    columnAt(Vector.fromList([Column.update(farColumn(), top = 7)]), 0).top => 7
+
+// ─── Dots and cells ────────────────────────────────────────────────────────
+
+fn pixelOn(col: Column, x: Int, y: Int) -> Bool
+    ? "Is dot (x, y) lit: empty ceiling above the wall, texture on it, dithered floor below"
+    height = col.bottom - col.top
+    match y < col.top
+        true -> false
+        false -> match y < col.bottom
+            true -> Texture.wallDot(col.hit.wallType, col.hit.u, (Float.fromInt(y - col.top) + 0.5) / Float.fromInt(height), height, x, y, col.dist)
+            false -> Texture.floorDot(x, y, horizon())
+
+verify pixelOn
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 10) => false
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 40) => true
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 45) => false
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 72) => true
+    pixelOn(farColumn(), 0, 40) => false
+
+fn columnBits(col: Column, x: Int, sub: Int, y0: Int, i: Int, acc: Int) -> Int
+    ? "Braille bits of the four dots of column x below dot row y0, in dot column sub of the cell"
+    match i >= 4
+        true -> acc
+        false -> match pixelOn(col, x, y0 + i)
+            true -> columnBits(col, x, sub, y0, i + 1, acc + Texture.dotBit(sub, i))
+            false -> columnBits(col, x, sub, y0, i + 1, acc)
+
+verify columnBits
+    columnBits(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 0, 36, 0, 0) => 71
+    columnBits(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 1, 1, 36, 0, 0) => 184
+    columnBits(Column.update(farColumn(), top = 38, bottom = 44, dist = 2.0), 0, 0, 36, 0, 0) => 68
+    columnBits(farColumn(), 0, 0, 0, 0, 0) => 0
+
+fn cellGlyph(left: Column, right: Column, cx: Int, row: Int) -> String
+    ? "Braille glyph of terminal cell (cx, row) from its two dot columns"
+    x0 = 2 * cx
+    y0 = 4 * row
+    Texture.brailleChar(columnBits(left, x0, 0, y0, 0, 0) + columnBits(right, x0 + 1, 1, y0, 0, 0))
+
+verify cellGlyph
+    cellGlyph(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 9) => "⣿"
+    cellGlyph(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), farColumn(), 0, 9) => "⡇"
+    cellGlyph(farColumn(), farColumn(), 0, 2) => " "
+
+fn hasWall(col: Column, row: Int) -> Bool
+    ? "Does the wall of this column reach into terminal row row"
+    y0 = 4 * row
+    Bool.and(col.top < y0 + 4, col.bottom > y0)
+
+verify hasWall
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 9) => true
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 10) => true
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 8) => false
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 11) => false
+
+fn cellColor(left: Column, right: Column, row: Int) -> String
+    ? "Color of a terminal cell: that of the wall in it, else the floor's"
+    match hasWall(left, row)
+        true -> Texture.wallColor(left.dist, left.hit.face)
+        false -> match hasWall(right, row)
+            true -> Texture.wallColor(right.dist, right.hit.face)
+            false -> "green"
+
+verify cellColor
+    cellColor(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), farColumn(), 9) => "white"
+    cellColor(farColumn(), Column.update(farColumn(), top = 36, bottom = 44, dist = 5.0), 9) => "cyan"
+    cellColor(farColumn(), farColumn(), 15) => "green"
+
+// ─── Rows as colored runs ──────────────────────────────────────────────────
+
+fn pushCell(runs: List<Run>, color: String, glyph: String) -> List<Run>
+    ? "Add a cell to runs kept newest first: it joins the last run when the color matches or the cell is blank"
+    match runs
+        [] -> [Run(color = color, text = glyph)]
+        [last, ..rest] -> match Bool.or(glyph == " ", last.color == color)
+            true -> List.prepend(Run(color = last.color, text = last.text + glyph), rest)
+            false -> List.prepend(Run(color = color, text = glyph), runs)
+
+verify pushCell
+    pushCell([], "blue", "a") => [Run(color = "blue", text = "a")]
+    pushCell([Run(color = "blue", text = "a")], "blue", "b") => [Run(color = "blue", text = "ab")]
+    pushCell([Run(color = "blue", text = "a")], "red", "b") => [Run(color = "red", text = "b"), Run(color = "blue", text = "a")]
+    pushCell([Run(color = "blue", text = "a")], "red", " ") => [Run(color = "blue", text = "a ")]
+
+fn viewRow(cols: Vector<Column>, row: Int, cx: Int, acc: List<Run>) -> List<Run>
+    ? "Terminal row row of the viewport as runs, left to right"
+    x0 = 2 * cx
+    left = columnAt(cols, x0)
+    right = columnAt(cols, x0 + 1)
+    match cx >= screenW()
+        true -> List.reverse(acc)
+        false -> viewRow(cols, row, cx + 1, pushCell(acc, cellColor(left, right, row), cellGlyph(left, right, cx, row)))
+
+verify viewRow
+    viewRow(Vector.fromList([]), 2, 0, []) => [Run(color = "green", text = "                                                            ")]
+    viewRow(Vector.fromList([]), 2, 60, []) => []
+
+verify viewRow law everyRowIsFullWidth
+    given row: Int = 0..19
+    given turn: Int = 0..7
+    runsWidth(viewRow(columns(Tiles.gridOf(["#######", "#..B..#", "#.#.M.#", "#.....#", "#######"]), Player(x = 1.5, y = 1.5, angle = Float.fromInt(turn) * 0.8, hp = 100), 0, []), row, 0, []), 0) => 60
+
+fn runsWidth(runs: List<Run>, acc: Int) -> Int
+    ? "Number of cells a list of runs covers"
+    match runs
+        [] -> acc
+        [run, ..rest] -> runsWidth(rest, acc + String.len(run.text))
+
+verify runsWidth
+    runsWidth([], 0) => 0
+    runsWidth([Run(color = "red", text = "ab"), Run(color = "blue", text = "c")], 0) => 3

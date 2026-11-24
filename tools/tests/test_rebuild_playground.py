@@ -28,7 +28,7 @@ class MainIndexUpdateTests(unittest.TestCase):
             "tetris": ("16.0 KiB", 40),
             "checkers": ("32.0 KiB", 80),
             "rogue": ("40.0 KiB", 100),
-            "doom": ("24.0 KiB", 60),
+            "raycaster": ("24.0 KiB", 60),
             "wumpus": ("4.0 KiB", 10),
             "eggcatch": ("20.0 KiB", 50),
         }

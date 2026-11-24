@@ -3,7 +3,7 @@
 //! The single-file gate (`wasm_gc_differential_mir.rs`) can't reach the
 //! rich match shapes — user-variant, record, and collection
 //! destructuring live almost entirely in the multi-module games (snake /
-//! rogue / checkers / doom: sum types + records), which need the CLI's
+//! rogue / checkers / raycaster: sum types + records), which need the CLI's
 //! `load_compile_deps` + `flatten_multimodule`. This test closes the gap
 //! by driving the real `aver compile --target wasm-gc` pipeline as a
 //! subprocess: for each game it compiles once (the production MIR path),

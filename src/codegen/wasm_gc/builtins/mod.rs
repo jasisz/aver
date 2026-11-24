@@ -3547,7 +3547,7 @@ fn emit_string_first_code_point(registry: &TypeRegistry) -> Result<Function, Was
 /// backend) — the linear-memory `OBJ_STRING` shape is replaced with
 /// `array.new_default $string` + `array.set`, the rest is byte-for-byte
 /// the same UTF-8 encoder. Critical for games like
-/// `examples/games/doom` that emit Braille block characters
+/// `examples/games/raycaster` that emit Braille block characters
 /// (U+2800..U+28FF, 3-byte UTF-8).
 fn emit_string_from_code_point(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry

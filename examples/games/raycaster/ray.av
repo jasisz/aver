@@ -1,0 +1,191 @@
+module Ray
+    intent =
+        "Rays over the level grid: the distance to the first wall along a direction,"
+        "which face was hit and where, and line of sight between two points."
+        "The renderer, the enemies and the gun all ask the same question here,"
+        "so what is drawn, what an enemy sees and what a shot hits cannot disagree."
+    depends [Types, Tiles, Math]
+    effects []
+
+decision WalkGridLinesNotFixedSteps
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "A ray marched in fixed 0.04 steps reports a wall up to one step late, so wall edges wobble,"
+        "it can slip past a corner thinner than a step, and a long corridor costs 500 lookups per ray."
+        "Walking from grid line to grid line visits each tile on the ray exactly once"
+        "and gives the exact crossing point, which is also the texture coordinate."
+        "With a camera ray of non-unit length the ray parameter is already the depth,"
+        "so the fisheye correction disappears instead of being patched on with a cosine."
+    chosen = "GridLineWalk"
+    rejected = ["FixedStepMarch", "FixedStepWithBisection"]
+    impacts = [cast, walk, lineOfSight]
+
+decision CornersBlock
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "A ray through the exact point where four tiles meet has no next tile: both neighbours are equally next."
+        "Picking one made sight depend on direction: A saw B past a corner while B did not see A."
+        "Such a ray is stopped when any of the three tiles around the corner is a wall,"
+        "so line of sight is symmetric and nothing is seen through two walls touching diagonally."
+    chosen = "AnyWallAtTheCornerStops"
+    rejected = ["XLineFirst", "YLineFirst"]
+    impacts = [crossCorner, lineOfSight]
+
+record March
+    mapX: Int
+    mapY: Int
+    sideX: Float
+    sideY: Float
+
+fn never() -> Float
+    ? "Ray parameter of a grid line the ray runs parallel to"
+    1.0e30
+
+verify never
+    never() > 1.0e20 => true
+
+fn stepLen(d: Float) -> Float
+    ? "Ray parameter between two consecutive grid lines of one axis"
+    match d == 0.0
+        true -> never()
+        false -> Float.abs(1.0 / d)
+
+verify stepLen
+    stepLen(2.0) => 0.5
+    stepLen(0.0 - 0.5) => 2.0
+    stepLen(0.0) => never()
+
+fn stepDir(d: Float) -> Int
+    ? "Tile step along one axis: -1 or 1"
+    match d < 0.0
+        true -> 0 - 1
+        false -> 1
+
+verify stepDir
+    stepDir(0.3) => 1
+    stepDir(0.0 - 0.3) => 0 - 1
+
+fn firstLine(pos: Float, d: Float) -> Float
+    ? "Ray parameter at which a ray leaving pos first meets a grid line of this axis"
+    cell = Float.fromInt(Float.floor(pos))
+    match d < 0.0
+        true -> (pos - cell) * stepLen(d)
+        false -> (cell + 1.0 - pos) * stepLen(d)
+
+verify firstLine
+    firstLine(1.25, 1.0) => 0.75
+    firstLine(1.25, 0.0 - 1.0) => 0.25
+    firstLine(1.5, 2.0) => 0.25
+
+fn cast(grid: Grid, px: Float, py: Float, dx: Float, dy: Float) -> RayHit
+    ? "Walk from (px, py) along (dx, dy) to the first wall."
+      "dist counts in lengths of (dx, dy): the Euclidean distance for a unit direction,"
+      "the depth in front of the camera for a camera ray."
+    walk(grid, px, py, dx, dy, March(mapX = Float.floor(px), mapY = Float.floor(py), sideX = firstLine(px, dx), sideY = firstLine(py, dy)))
+
+verify cast
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.5, 1.0, 0.0).dist => 2.5
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.5, 1.0, 0.0).face => Face.EastWest
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.5, 0.0 - 1.0, 0.0).dist => 0.5
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.25, 0.0, 1.0).dist => 0.75
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.25, 0.0, 1.0).face => Face.NorthSouth
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.25, 0.0, 1.0).u => 0.5
+    cast(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.25, 2.0, 0.0).dist => 1.25
+    cast(Tiles.gridOf(["#####", "#.BM#", "#####"]), 1.5, 1.5, 1.0, 0.0).wallType => WallType.Metal
+    cast(Tiles.gridOf(["#####", "#.BM#", "#####"]), 2.5, 1.5, 0.0, 1.0).wallType => WallType.Brick
+    cast(Tiles.gridOf(["....", "....", "....", "...."]), 0.5, 0.5, 1.0, 1.0).dist => 3.5
+    cast(Tiles.gridOf(["....", "..#.", "....", "...."]), 0.5, 0.5, 1.0, 1.0).dist => 1.5
+
+verify cast law unitRayNeverEndsInsideAWall
+    given step: Int = 0..15
+    given px: Float = [1.5, 2.25, 3.75]
+    Tiles.solid(Tiles.gridOf(["#####", "#...#", "#.#.#", "#...#", "#####"]), Float.floor(px + Float.cos(Float.fromInt(step) * 0.4) * cast(Tiles.gridOf(["#####", "#...#", "#.#.#", "#...#", "#####"]), px, 1.5, Float.cos(Float.fromInt(step) * 0.4), Float.sin(Float.fromInt(step) * 0.4)).dist * 0.999), Float.floor(1.5 + Float.sin(Float.fromInt(step) * 0.4) * cast(Tiles.gridOf(["#####", "#...#", "#.#.#", "#...#", "#####"]), px, 1.5, Float.cos(Float.fromInt(step) * 0.4), Float.sin(Float.fromInt(step) * 0.4)).dist * 0.999)) => false
+
+fn walk(grid: Grid, px: Float, py: Float, dx: Float, dy: Float, m: March) -> RayHit
+    ? "Cross the nearer grid line; at an exact tie the ray goes through a corner"
+    match m.sideX == m.sideY
+        true -> crossCorner(grid, px, py, dx, dy, m)
+        false -> match m.sideX < m.sideY
+            true -> crossX(grid, px, py, dx, dy, m)
+            false -> crossY(grid, px, py, dx, dy, m)
+
+verify walk
+    walk(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.5, 1.0, 0.0, March(mapX = 3, mapY = 1, sideX = 2.5, sideY = never())).dist => 2.5
+
+fn hitX(grid: Grid, py: Float, dy: Float, m: March) -> RayHit
+    ? "The ray ends on a wall face across an x grid line"
+    RayHit(dist = m.sideX, face = Face.EastWest, wallType = Tiles.zoneAt(grid, m.mapX, m.mapY), u = Math.frac(py + dy * m.sideX))
+
+verify hitX
+    hitX(Tiles.gridOf(["#M#"]), 0.25, 0.5, March(mapX = 1, mapY = 0, sideX = 0.5, sideY = 2.0)).u => 0.5
+    hitX(Tiles.gridOf(["#M#"]), 0.25, 0.5, March(mapX = 1, mapY = 0, sideX = 0.5, sideY = 2.0)).wallType => WallType.Metal
+
+fn hitY(grid: Grid, px: Float, dx: Float, m: March) -> RayHit
+    ? "The ray ends on a wall face across a y grid line"
+    RayHit(dist = m.sideY, face = Face.NorthSouth, wallType = Tiles.zoneAt(grid, m.mapX, m.mapY), u = Math.frac(px + dx * m.sideY))
+
+verify hitY
+    hitY(Tiles.gridOf(["#B#"]), 1.25, 0.5, March(mapX = 1, mapY = 0, sideX = 2.0, sideY = 0.5)).u => 0.5
+    hitY(Tiles.gridOf(["#B#"]), 1.25, 0.5, March(mapX = 1, mapY = 0, sideX = 2.0, sideY = 0.5)).face => Face.NorthSouth
+
+fn crossX(grid: Grid, px: Float, py: Float, dx: Float, dy: Float, m: March) -> RayHit
+    ? "Step into the next tile along x, or stop on its face"
+    nextX = m.mapX + stepDir(dx)
+    match Tiles.solid(grid, nextX, m.mapY)
+        true -> hitX(grid, py, dy, m)
+        false -> walk(grid, px, py, dx, dy, March.update(m, mapX = nextX, sideX = m.sideX + stepLen(dx)))
+
+verify crossX
+    crossX(Tiles.gridOf(["#####", "#...#", "#####"]), 1.5, 1.5, 1.0, 0.0, March(mapX = 1, mapY = 1, sideX = 0.5, sideY = never())).dist => 2.5
+
+fn crossY(grid: Grid, px: Float, py: Float, dx: Float, dy: Float, m: March) -> RayHit
+    ? "Step into the next tile along y, or stop on its face"
+    nextY = m.mapY + stepDir(dy)
+    match Tiles.solid(grid, m.mapX, nextY)
+        true -> hitY(grid, px, dx, m)
+        false -> walk(grid, px, py, dx, dy, March.update(m, mapY = nextY, sideY = m.sideY + stepLen(dy)))
+
+verify crossY
+    crossY(Tiles.gridOf(["###", "#.#", "#.#", "###"]), 1.5, 1.5, 0.0, 1.0, March(mapX = 1, mapY = 1, sideX = never(), sideY = 0.5)).dist => 1.5
+
+fn crossCorner(grid: Grid, px: Float, py: Float, dx: Float, dy: Float, m: March) -> RayHit
+    ? "The ray passes exactly through a tile corner: any wall around the corner stops it"
+    nextX = m.mapX + stepDir(dx)
+    nextY = m.mapY + stepDir(dy)
+    match Tiles.solid(grid, nextX, m.mapY)
+        true -> hitX(grid, py, dy, m)
+        false -> match Bool.or(Tiles.solid(grid, m.mapX, nextY), Tiles.solid(grid, nextX, nextY))
+            true -> hitY(grid, px, dx, m)
+            false -> walk(grid, px, py, dx, dy, March(mapX = nextX, mapY = nextY, sideX = m.sideX + stepLen(dx), sideY = m.sideY + stepLen(dy)))
+
+verify crossCorner
+    crossCorner(Tiles.gridOf(["....", "....", "....", "...."]), 0.5, 0.5, 1.0, 1.0, March(mapX = 0, mapY = 0, sideX = 0.5, sideY = 0.5)).dist => 3.5
+    crossCorner(Tiles.gridOf(["....", "..#.", "....", "...."]), 0.5, 0.5, 1.0, 1.0, March(mapX = 0, mapY = 0, sideX = 0.5, sideY = 0.5)).dist => 1.5
+    crossCorner(Tiles.gridOf(["....", ".#..", "....", "...."]), 0.5, 0.5, 1.0, 1.0, March(mapX = 0, mapY = 0, sideX = 0.5, sideY = 0.5)).dist => 0.5
+    crossCorner(Tiles.gridOf([".#..", "....", "....", "...."]), 0.5, 0.5, 1.0, 1.0, March(mapX = 0, mapY = 0, sideX = 0.5, sideY = 0.5)).dist => 0.5
+    crossCorner(Tiles.gridOf(["....", "#...", "....", "...."]), 0.5, 0.5, 1.0, 1.0, March(mapX = 0, mapY = 0, sideX = 0.5, sideY = 0.5)).dist => 0.5
+
+fn lineOfSight(grid: Grid, x1: Float, y1: Float, x2: Float, y2: Float) -> Bool
+    ? "Can (x2, y2) be seen from (x1, y1): no wall on the segment between them"
+    dx = x2 - x1
+    dy = y2 - y1
+    match Bool.and(dx == 0.0, dy == 0.0)
+        true -> true
+        false -> cast(grid, x1, y1, dx, dy).dist >= 1.0
+
+verify lineOfSight
+    lineOfSight(Tiles.gridOf(["...", ".#.", "..."]), 0.5, 0.5, 2.5, 0.5) => true
+    lineOfSight(Tiles.gridOf(["...", ".#.", "..."]), 0.5, 1.5, 2.5, 1.5) => false
+    lineOfSight(Tiles.gridOf(["...", ".#.", "..."]), 0.5, 0.5, 2.5, 2.5) => false
+    lineOfSight(Tiles.gridOf(["...", ".#.", "..."]), 0.5, 0.5, 0.5, 0.5) => true
+    lineOfSight(Tiles.gridOf([".#.", "#..", "..."]), 0.5, 0.5, 2.5, 2.5) => false
+
+verify lineOfSight law symmetric
+    given ax: Int = 0..4
+    given ay: Int = 0..4
+    given bx: Int = 0..4
+    given by: Int = 0..4
+    when Bool.not(Bool.or(Tiles.solid(Tiles.gridOf([".....", ".#...", "...#.", ".#...", "....."]), ax, ay), Tiles.solid(Tiles.gridOf([".....", ".#...", "...#.", ".#...", "....."]), bx, by)))
+    lineOfSight(Tiles.gridOf([".....", ".#...", "...#.", ".#...", "....."]), Float.fromInt(ax) + 0.5, Float.fromInt(ay) + 0.5, Float.fromInt(bx) + 0.5, Float.fromInt(by) + 0.5) => lineOfSight(Tiles.gridOf([".....", ".#...", "...#.", ".#...", "....."]), Float.fromInt(bx) + 0.5, Float.fromInt(by) + 0.5, Float.fromInt(ax) + 0.5, Float.fromInt(ay) + 0.5)

@@ -586,7 +586,7 @@ function keyToCode(key) {
 
 function runtimeKeyForCurrentModule(key) {
     const normalized = key === "escape" ? "esc" : key;
-    if (normalized === "esc" && state.activeGame === "doom") {
+    if (normalized === "esc" && state.activeGame === "raycaster") {
         return "escape";
     }
     return normalized;
@@ -4069,7 +4069,7 @@ const GAME_SOURCES = {
     tetris:   ["examples/games/tetris/pieces.av", "examples/games/tetris/board.av", "examples/games/tetris/logic.av", "examples/games/tetris/main.av"],
     checkers: ["examples/games/checkers/board.av", "examples/games/checkers/rules.av", "examples/games/checkers/ai.av", "examples/games/checkers/render.av", "examples/games/checkers/main.av"],
     rogue:    ["examples/games/rogue/types.av", "examples/games/rogue/map.av", "examples/games/rogue/fov.av", "examples/games/rogue/combat.av", "examples/games/rogue/pathfinding.av", "examples/games/rogue/render.av", "examples/games/rogue/main.av"],
-    doom:     ["examples/games/doom/types.av", "examples/games/doom/math.av", "examples/games/doom/rng.av", "examples/games/doom/level.av", "examples/games/doom/enemy.av", "examples/games/doom/render.av", "examples/games/doom/main.av"],
+    raycaster: ["examples/games/raycaster/types.av", "examples/games/raycaster/math.av", "examples/games/raycaster/rng.av", "examples/games/raycaster/tiles.av", "examples/games/raycaster/level.av", "examples/games/raycaster/ray.av", "examples/games/raycaster/enemy.av", "examples/games/raycaster/texture.av", "examples/games/raycaster/view.av", "examples/games/raycaster/shapes.av", "examples/games/raycaster/sprites.av", "examples/games/raycaster/render.av", "examples/games/raycaster/main.av"],
     eggcatch: ["examples/games/eggcatch/core.av", "examples/games/eggcatch/main.av"],
 };
 
@@ -4192,7 +4192,7 @@ const GAME_TOUCH = {
             { key: ">", text: ">" }, { key: "q", text: "Quit" },
         ]},
     ],
-    doom: [
+    raycaster: [
         { label: "Move", layout: "grid:wasd", keys: [
             { key: "q", text: "Q" }, { key: "w", text: "W" }, { key: "e", text: "E" },
             { key: "a", text: "A" }, { key: "s", text: "S" }, { key: "d", text: "D" },
@@ -4201,7 +4201,7 @@ const GAME_TOUCH = {
             { key: "left", text: "←" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Spc" }, { key: "esc", text: "Esc" },
+            { key: " ", text: "Spc" }, { key: "r", text: "R" }, { key: "esc", text: "Esc" },
         ]},
     ],
     // wumpus: console game, no touch controls
