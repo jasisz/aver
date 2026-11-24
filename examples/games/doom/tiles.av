@@ -1,0 +1,133 @@
+module Tiles
+    intent =
+        "The level as the game reads it: a flat grid of cell codes with constant-time lookup."
+        "Answers what is solid, which wall texture a floor tile's walls show,"
+        "and whether a body of some width fits at a position."
+    depends [Types]
+    effects []
+
+decision WallsTakeTheZoneTheyFace
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "The zone map marks floor tiles, because rooms and corridors are what the generator carves."
+        "A wall tile has no zone of its own: looked up directly, every wall came out Stone"
+        "and the Brick and Metal textures were never drawn."
+        "A wall is seen from a floor tile, so it takes the zone of the tile it is seen from."
+        "One wall tile between a room and a corridor then shows brick to the room and metal to the corridor."
+    chosen = "ZoneOfTheFloorInFront"
+    rejected = ["ZonePerWallTile", "SpreadZonesIntoNeighbouringWalls"]
+    impacts = [tileCode, zoneAt, toGrid]
+
+fn tileCode(tile: String, zone: String) -> Int
+    ? "Grid cell code: 0 is a wall, 1..3 a floor tile of the Stone, Brick or Metal zone"
+    match tile
+        "#" -> 0
+        _ -> match zone
+            "B" -> 2
+            "M" -> 3
+            _ -> 1
+
+verify tileCode
+    tileCode("#", "B") => 0
+    tileCode(".", "S") => 1
+    tileCode(".", "B") => 2
+    tileCode(".", "M") => 3
+
+fn rowCodes(tiles: List<String>, zones: List<String>, acc: List<Int>) -> List<Int>
+    ? "Prepend the cell codes of one row to acc; a missing zone counts as Stone"
+    match tiles
+        [] -> acc
+        [t, ..rest] -> match zones
+            [] -> rowCodes(rest, [], List.prepend(tileCode(t, "S"), acc))
+            [z, ..zrest] -> rowCodes(rest, zrest, List.prepend(tileCode(t, z), acc))
+
+verify rowCodes
+    rowCodes(["#", "."], ["S", "M"], []) => [3, 0]
+    rowCodes(["."], [], [7]) => [1, 7]
+    rowCodes([], ["S"], [7]) => [7]
+
+fn gridCodes(levelMap: List<String>, zoneMap: List<String>, acc: List<Int>) -> List<Int>
+    ? "Cell codes of all rows, last cell first"
+    match levelMap
+        [] -> acc
+        [row, ..rest] -> match zoneMap
+            [] -> gridCodes(rest, [], rowCodes(String.chars(row), [], acc))
+            [zrow, ..zrest] -> gridCodes(rest, zrest, rowCodes(String.chars(row), String.chars(zrow), acc))
+
+verify gridCodes
+    gridCodes(["#.", ".#"], ["SB", "MS"], []) => [0, 3, 2, 0]
+    gridCodes([], ["SB"], [5]) => [5]
+
+fn toGrid(levelMap: List<String>, zoneMap: List<String>) -> Grid
+    ? "Flatten a level and its zone map into a grid"
+    width = match levelMap
+        [] -> 0
+        [row, .._] -> String.len(row)
+    Grid(width = width, height = List.len(levelMap), cells = Vector.fromList(List.reverse(gridCodes(levelMap, zoneMap, []))))
+
+verify toGrid
+    toGrid(["#.", ".#"], ["SB", "MS"]).width => 2
+    toGrid(["#.", ".#"], ["SB", "MS"]).height => 2
+    cellAt(toGrid(["#.", ".#"], ["SB", "MS"]), 1, 0) => 2
+    cellAt(toGrid(["#.", ".#"], ["SB", "MS"]), 0, 1) => 3
+    toGrid([], []).width => 0
+
+fn gridOf(rows: List<String>) -> Grid
+    ? "Grid drawn in one picture: '#' wall, 'B' and 'M' floor of that zone, anything else stone floor"
+    toGrid(rows, rows)
+
+verify gridOf
+    cellAt(gridOf(["#.BM"]), 0, 0) => 0
+    cellAt(gridOf(["#.BM"]), 1, 0) => 1
+    cellAt(gridOf(["#.BM"]), 2, 0) => 2
+    cellAt(gridOf(["#.BM"]), 3, 0) => 3
+
+fn cellAt(grid: Grid, x: Int, y: Int) -> Int
+    ? "Cell code at (x, y); everything outside the grid is wall"
+    match Bool.or(Bool.or(x < 0, y < 0), Bool.or(x >= grid.width, y >= grid.height))
+        true -> 0
+        false -> Option.withDefault(Vector.get(grid.cells, y * grid.width + x), 0)
+
+verify cellAt
+    cellAt(gridOf(["..", ".#"]), 1, 1) => 0
+    cellAt(gridOf(["..", ".#"]), 0, 1) => 1
+    cellAt(gridOf(["..", ".#"]), 0 - 1, 0) => 0
+    cellAt(gridOf(["..", ".#"]), 2, 0) => 0
+    cellAt(gridOf(["..", ".#"]), 0, 2) => 0
+
+fn solid(grid: Grid, x: Int, y: Int) -> Bool
+    ? "Is tile (x, y) a wall"
+    cellAt(grid, x, y) == 0
+
+verify solid
+    solid(gridOf(["#."]), 0, 0) => true
+    solid(gridOf(["#."]), 1, 0) => false
+    solid(gridOf(["#."]), 5, 5) => true
+
+fn zoneAt(grid: Grid, x: Int, y: Int) -> WallType
+    ? "Wall type shown by the walls around floor tile (x, y)"
+    match cellAt(grid, x, y)
+        2 -> WallType.Brick
+        3 -> WallType.Metal
+        _ -> WallType.Stone
+
+verify zoneAt
+    zoneAt(gridOf([".BM#"]), 0, 0) => WallType.Stone
+    zoneAt(gridOf([".BM#"]), 1, 0) => WallType.Brick
+    zoneAt(gridOf([".BM#"]), 2, 0) => WallType.Metal
+    zoneAt(gridOf([".BM#"]), 3, 0) => WallType.Stone
+
+fn blocked(grid: Grid, x: Float, y: Float, r: Float) -> Bool
+    ? "Does a body of half-width r centred at (x, y) overlap a wall"
+    left = Float.floor(x - r)
+    right = Float.floor(x + r)
+    top = Float.floor(y - r)
+    bottom = Float.floor(y + r)
+    Bool.or(Bool.or(solid(grid, left, top), solid(grid, right, top)), Bool.or(solid(grid, left, bottom), solid(grid, right, bottom)))
+
+verify blocked
+    blocked(gridOf(["...", "...", "..#"]), 1.5, 1.5, 0.25) => false
+    blocked(gridOf(["...", "...", "..#"]), 1.8, 1.8, 0.25) => true
+    blocked(gridOf(["...", "...", "..#"]), 1.8, 1.5, 0.25) => false
+    blocked(gridOf(["...", "...", "..#"]), 0.1, 1.5, 0.25) => true

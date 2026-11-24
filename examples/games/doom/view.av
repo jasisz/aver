@@ -1,0 +1,403 @@
+module View
+    intent =
+        "The pure half of the renderer: the camera, one wall column per horizontal Braille dot,"
+        "terminal rows as colored runs of glyphs, and enemy sprites projected"
+        "and depth-tested against the walls."
+    depends [Types, Tiles, Ray, Texture]
+    effects []
+
+decision RayPerDotColumn
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "A Braille cell is two dots wide, but one ray was cast per cell"
+        "and the left and right dot columns only marked which face was hit."
+        "Half of the horizontal resolution carried no geometry."
+        "One ray per dot column gives 120 columns in 60 cells; the face is shown by color instead."
+    chosen = "OneRayPerDot"
+    rejected = ["OneRayPerCell"]
+    impacts = [column, columns, cellGlyph]
+
+decision CameraPlaneProjection
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "Rays were spaced by equal angles and the heights corrected with a cosine:"
+        "straight walls bowed toward the screen edges."
+        "A wall was 80 / distance dots tall whatever the width of the view, so tiles looked squat."
+        "Rays through equally spaced points of a camera plane keep straight walls straight."
+        "A terminal cell is twice as tall as wide and holds 2 x 4 dots, so dots are square"
+        "and one scale serves both axes: a tile is drawn as tall as it is wide."
+    chosen = "CameraPlane"
+    rejected = ["EqualAnglesWithCosine"]
+    impacts = [column, wallScale, spriteAt]
+
+decision SpritesTestedPerCell
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "An enemy was drawn whole whenever its centre column was in front of the wall,"
+        "so one standing half behind a corner showed through the wall."
+        "Its distance was Euclidean while the wall's was a depth, so the comparison drifted toward the screen edges."
+        "Each sprite cell is now compared with the wall depth of its own two columns, both measured as depth,"
+        "and sprites are painted far to near so a near enemy covers a far one."
+    chosen = "DepthTestPerCell"
+    rejected = ["CentreColumnOnly"]
+    impacts = [inFront, spriteShows, project, insertFarFirst]
+// ─── Screen and camera ─────────────────────────────────────────────────────
+
+fn screenW() -> Int
+    ? "Terminal columns of the 3D viewport"
+    60
+
+verify screenW
+    screenW() => 60
+
+fn screenH() -> Int
+    ? "Terminal rows of the 3D viewport"
+    20
+
+verify screenH
+    screenH() => 20
+
+fn pixelW() -> Int
+    ? "Viewport width in dots: two per terminal column"
+    2 * screenW()
+
+verify pixelW
+    pixelW() => 120
+
+fn pixelH() -> Int
+    ? "Viewport height in dots: four per terminal row"
+    4 * screenH()
+
+verify pixelH
+    pixelH() => 80
+
+fn horizon() -> Int
+    ? "Dot row of the horizon"
+    Int.div(pixelH(), 2)
+
+verify horizon
+    horizon() => 40
+
+fn planeLen() -> Float
+    ? "Half-width of the camera plane one unit ahead: the tangent of half the field of view (about 67 degrees)"
+    0.66
+
+verify planeLen
+    planeLen() => 0.66
+
+fn wallScale() -> Float
+    ? "Dots that one map unit spans on screen at depth 1"
+    Float.fromInt(pixelW()) / 2.0 / planeLen()
+
+verify wallScale
+    Float.round(wallScale()) => 91
+
+record Column
+    dist: Float
+    top: Int
+    bottom: Int
+    hit: RayHit
+
+record Run
+    color: String
+    text: String
+
+record Sprite
+    kind: EnemyKind
+    depth: Float
+    left: Int
+    top: Int
+    cols: Int
+    rows: Int
+
+// ─── Wall columns ──────────────────────────────────────────────────────────
+
+fn farColumn() -> Column
+    ? "A column with no wall in it"
+    mid = horizon()
+    Column(dist = 1.0e30, top = mid, bottom = mid, hit = RayHit(dist = 1.0e30, face = Face.EastWest, wallType = WallType.Stone, u = 0.0))
+
+verify farColumn
+    farColumn().top => 40
+    farColumn().bottom => 40
+
+fn column(grid: Grid, player: Player, x: Int) -> Column
+    ? "Cast the camera ray through dot column x and measure the wall it hits"
+    camX = Float.fromInt(2 * x + 1) / Float.fromInt(pixelW()) - 1.0
+    dirX = Float.cos(player.angle)
+    dirY = Float.sin(player.angle)
+    across = planeLen() * camX
+    hit = Ray.cast(grid, player.x, player.y, dirX - dirY * across, dirY + dirX * across)
+    half = wallScale() / Float.max(hit.dist, 0.05) / 2.0
+    mid = Float.fromInt(horizon())
+    Column(dist = hit.dist, top = Float.round(mid - half), bottom = Float.round(mid + half), hit = hit)
+
+verify column
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).dist => 4.5
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).top => 30
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).bottom => 50
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 60).hit.face => Face.EastWest
+    column(Tiles.gridOf(["#######", "#.....#", "#######"]), Types.mkPlayer(1.5, 1.5), 0).hit.face => Face.NorthSouth
+
+verify column law flatWallHasOneDepth
+    given x: Int = 0..119
+    Float.round(column(Tiles.gridOf(["###############", "#.............#", "#.............#", "#.............#", "###############"]), Player(x = 7.5, y = 3.5, angle = 0.0 - Float.pi() / 2.0, hp = 100), x).dist * 1000.0) => 2500
+
+fn columns(grid: Grid, player: Player, x: Int, acc: List<Column>) -> Vector<Column>
+    ? "All wall columns of a frame, left to right"
+    match x >= pixelW()
+        true -> Vector.fromList(List.reverse(acc))
+        false -> columns(grid, player, x + 1, List.prepend(column(grid, player, x), acc))
+
+verify columns
+    Vector.len(columns(Tiles.gridOf(["#####", "#...#", "#####"]), Types.mkPlayer(1.5, 1.5), 0, [])) => 120
+    Vector.len(columns(Tiles.gridOf(["#####", "#...#", "#####"]), Types.mkPlayer(1.5, 1.5), 120, [])) => 0
+
+fn columnAt(cols: Vector<Column>, x: Int) -> Column
+    ? "Column x of a frame; an empty column outside it"
+    Option.withDefault(Vector.get(cols, x), farColumn())
+
+verify columnAt
+    columnAt(Vector.fromList([]), 3) => farColumn()
+    columnAt(Vector.fromList([Column.update(farColumn(), top = 7)]), 0).top => 7
+
+// ─── Dots and cells ────────────────────────────────────────────────────────
+
+fn pixelOn(col: Column, x: Int, y: Int) -> Bool
+    ? "Is dot (x, y) lit: empty ceiling above the wall, texture on it, dithered floor below"
+    height = col.bottom - col.top
+    match y < col.top
+        true -> false
+        false -> match y < col.bottom
+            true -> Texture.wallDot(col.hit.wallType, col.hit.u, (Float.fromInt(y - col.top) + 0.5) / Float.fromInt(height), height, x, y, col.dist)
+            false -> Texture.floorDot(x, y, horizon())
+
+verify pixelOn
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 10) => false
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 40) => true
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 45) => false
+    pixelOn(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 72) => true
+    pixelOn(farColumn(), 0, 40) => false
+
+fn columnBits(col: Column, x: Int, sub: Int, y0: Int, i: Int, acc: Int) -> Int
+    ? "Braille bits of the four dots of column x below dot row y0, in dot column sub of the cell"
+    match i >= 4
+        true -> acc
+        false -> match pixelOn(col, x, y0 + i)
+            true -> columnBits(col, x, sub, y0, i + 1, acc + Texture.dotBit(sub, i))
+            false -> columnBits(col, x, sub, y0, i + 1, acc)
+
+verify columnBits
+    columnBits(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 0, 36, 0, 0) => 71
+    columnBits(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 1, 1, 36, 0, 0) => 184
+    columnBits(Column.update(farColumn(), top = 38, bottom = 44, dist = 2.0), 0, 0, 36, 0, 0) => 68
+    columnBits(farColumn(), 0, 0, 0, 0, 0) => 0
+
+fn cellGlyph(left: Column, right: Column, cx: Int, row: Int) -> String
+    ? "Braille glyph of terminal cell (cx, row) from its two dot columns"
+    x0 = 2 * cx
+    y0 = 4 * row
+    Texture.brailleChar(columnBits(left, x0, 0, y0, 0, 0) + columnBits(right, x0 + 1, 1, y0, 0, 0))
+
+verify cellGlyph
+    cellGlyph(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), 0, 9) => "⣿"
+    cellGlyph(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), farColumn(), 0, 9) => "⡇"
+    cellGlyph(farColumn(), farColumn(), 0, 2) => " "
+
+fn hasWall(col: Column, row: Int) -> Bool
+    ? "Does the wall of this column reach into terminal row row"
+    y0 = 4 * row
+    Bool.and(col.top < y0 + 4, col.bottom > y0)
+
+verify hasWall
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 9) => true
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 10) => true
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 8) => false
+    hasWall(Column.update(farColumn(), top = 36, bottom = 44), 11) => false
+
+fn cellColor(left: Column, right: Column, row: Int) -> String
+    ? "Color of a terminal cell: that of the wall in it, else the floor's"
+    match hasWall(left, row)
+        true -> Texture.wallColor(left.dist, left.hit.face)
+        false -> match hasWall(right, row)
+            true -> Texture.wallColor(right.dist, right.hit.face)
+            false -> "green"
+
+verify cellColor
+    cellColor(Column.update(farColumn(), top = 36, bottom = 44, dist = 2.0), farColumn(), 9) => "white"
+    cellColor(farColumn(), Column.update(farColumn(), top = 36, bottom = 44, dist = 5.0), 9) => "cyan"
+    cellColor(farColumn(), farColumn(), 15) => "green"
+
+// ─── Rows as colored runs ──────────────────────────────────────────────────
+
+fn pushCell(runs: List<Run>, color: String, glyph: String) -> List<Run>
+    ? "Add a cell to runs kept newest first: it joins the last run when the color matches or the cell is blank"
+    match runs
+        [] -> [Run(color = color, text = glyph)]
+        [last, ..rest] -> match Bool.or(glyph == " ", last.color == color)
+            true -> List.prepend(Run(color = last.color, text = last.text + glyph), rest)
+            false -> List.prepend(Run(color = color, text = glyph), runs)
+
+verify pushCell
+    pushCell([], "blue", "a") => [Run(color = "blue", text = "a")]
+    pushCell([Run(color = "blue", text = "a")], "blue", "b") => [Run(color = "blue", text = "ab")]
+    pushCell([Run(color = "blue", text = "a")], "red", "b") => [Run(color = "red", text = "b"), Run(color = "blue", text = "a")]
+    pushCell([Run(color = "blue", text = "a")], "red", " ") => [Run(color = "blue", text = "a ")]
+
+fn viewRow(cols: Vector<Column>, row: Int, cx: Int, acc: List<Run>) -> List<Run>
+    ? "Terminal row row of the viewport as runs, left to right"
+    x0 = 2 * cx
+    left = columnAt(cols, x0)
+    right = columnAt(cols, x0 + 1)
+    match cx >= screenW()
+        true -> List.reverse(acc)
+        false -> viewRow(cols, row, cx + 1, pushCell(acc, cellColor(left, right, row), cellGlyph(left, right, cx, row)))
+
+verify viewRow
+    viewRow(Vector.fromList([]), 2, 0, []) => [Run(color = "green", text = "                                                            ")]
+    viewRow(Vector.fromList([]), 2, 60, []) => []
+
+verify viewRow law everyRowIsFullWidth
+    given row: Int = 0..19
+    given turn: Int = 0..7
+    runsWidth(viewRow(columns(Tiles.gridOf(["#######", "#..B..#", "#.#.M.#", "#.....#", "#######"]), Player(x = 1.5, y = 1.5, angle = Float.fromInt(turn) * 0.8, hp = 100), 0, []), row, 0, []), 0) => 60
+
+// ─── Enemy sprites ─────────────────────────────────────────────────────────
+
+fn runsWidth(runs: List<Run>, acc: Int) -> Int
+    ? "Number of cells a list of runs covers"
+    match runs
+        [] -> acc
+        [run, ..rest] -> runsWidth(rest, acc + String.len(run.text))
+
+verify runsWidth
+    runsWidth([], 0) => 0
+    runsWidth([Run(color = "red", text = "ab"), Run(color = "blue", text = "c")], 0) => 3
+
+fn spriteHeight(kind: EnemyKind) -> Float
+    ? "Height of an enemy in map units; a wall is 1 high"
+    match kind
+        EnemyKind.Imp -> 0.7
+        EnemyKind.Demon -> 0.95
+        EnemyKind.Ghost -> 0.6
+
+verify spriteHeight
+    spriteHeight(EnemyKind.Imp) => 0.7
+    spriteHeight(EnemyKind.Demon) => 0.95
+    spriteHeight(EnemyKind.Ghost) => 0.6
+
+fn spriteAspect(kind: EnemyKind) -> Float
+    ? "Width of an enemy as a share of its height"
+    match kind
+        EnemyKind.Imp -> 0.8
+        EnemyKind.Demon -> 0.95
+        EnemyKind.Ghost -> 1.0
+
+verify spriteAspect
+    spriteAspect(EnemyKind.Imp) => 0.8
+    spriteAspect(EnemyKind.Demon) => 0.95
+    spriteAspect(EnemyKind.Ghost) => 1.0
+
+fn spriteLift(kind: EnemyKind) -> Float
+    ? "How high above the floor an enemy's feet are: the ghost floats"
+    match kind
+        EnemyKind.Ghost -> 0.25
+        _ -> 0.0
+
+verify spriteLift
+    spriteLift(EnemyKind.Ghost) => 0.25
+    spriteLift(EnemyKind.Imp) => 0.0
+
+fn spriteAt(kind: EnemyKind, depth: Float, side: Float) -> Sprite
+    ? "Screen rectangle, in terminal cells, of an enemy depth ahead of the camera and side to its right"
+    unit = wallScale() / depth
+    height = spriteHeight(kind) * unit
+    feet = Float.fromInt(horizon()) + unit * (0.5 - spriteLift(kind))
+    cols = Int.max(1, Float.round(height * spriteAspect(kind) / 2.0))
+    centre = (Float.fromInt(pixelW()) / 2.0 + side * unit) / 2.0
+    Sprite(kind = kind, depth = depth, left = Float.round(centre - Float.fromInt(cols) / 2.0), top = Float.round((feet - height) / 4.0), cols = cols, rows = Int.max(1, Float.round(height / 4.0)))
+
+verify spriteAt
+    spriteAt(EnemyKind.Demon, 2.0, 0.0).rows => 11
+    spriteAt(EnemyKind.Demon, 2.0, 0.0).cols => 21
+    spriteAt(EnemyKind.Demon, 2.0, 0.0).left => 20
+    spriteAt(EnemyKind.Demon, 2.0, 0.0).top => 5
+    spriteAt(EnemyKind.Imp, 60.0, 0.0).rows => 1
+    spriteAt(EnemyKind.Imp, 60.0, 0.0).cols => 1
+    spriteAt(EnemyKind.Imp, 4.0, 1.0).left > spriteAt(EnemyKind.Imp, 4.0, 0.0).left => true
+
+fn project(player: Player, e: Enemy) -> Option<Sprite>
+    ? "The sprite of an enemy, unless it is behind the camera or too close to draw"
+    rx = e.x - player.x
+    ry = e.y - player.y
+    dirX = Float.cos(player.angle)
+    dirY = Float.sin(player.angle)
+    depth = rx * dirX + ry * dirY
+    match depth < 0.3
+        true -> Option.None
+        false -> Option.Some(spriteAt(e.kind, depth, ry * dirX - rx * dirY))
+
+verify project
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(0.0, 1.0, EnemyKind.Imp, 3)) => Option.None
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 1.0, EnemyKind.Demon, 8)) => Option.Some(spriteAt(EnemyKind.Demon, 2.0, 0.0))
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 2.0, EnemyKind.Demon, 8)) => Option.Some(spriteAt(EnemyKind.Demon, 2.0, 1.0))
+
+fn insertFarFirst(s: Sprite, sorted: List<Sprite>, before: List<Sprite>) -> List<Sprite>
+    ? "Insert a sprite into a list ordered farthest first; before holds the farther ones already passed, nearest first"
+    match sorted
+        [] -> List.reverse(List.prepend(s, before))
+        [head, ..rest] -> match s.depth >= head.depth
+            true -> List.concat(List.reverse(before), List.prepend(s, sorted))
+            false -> insertFarFirst(s, rest, List.prepend(head, before))
+
+verify insertFarFirst
+    insertFarFirst(spriteAt(EnemyKind.Imp, 2.0, 0.0), [], []) => [spriteAt(EnemyKind.Imp, 2.0, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Imp, 2.0, 0.0), [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 2.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Imp, 0.5, 0.0), [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0), spriteAt(EnemyKind.Imp, 0.5, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Imp, 9.0, 0.0), [spriteAt(EnemyKind.Imp, 3.0, 0.0)], []) => [spriteAt(EnemyKind.Imp, 9.0, 0.0), spriteAt(EnemyKind.Imp, 3.0, 0.0)]
+
+fn sprites(player: Player, enemies: List<Enemy>, acc: List<Sprite>) -> List<Sprite>
+    ? "Sprites of the enemies ahead of the camera, farthest first, so painting in order lets the near cover the far"
+    match enemies
+        [] -> acc
+        [e, ..rest] -> match project(player, e)
+            Option.Some(s) -> sprites(player, rest, insertFarFirst(s, acc, []))
+            Option.None -> sprites(player, rest, acc)
+
+verify sprites
+    sprites(Types.mkPlayer(1.0, 1.0), [], []) => []
+    sprites(Types.mkPlayer(1.0, 1.0), [Types.mkEnemy(3.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(0.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(5.0, 1.0, EnemyKind.Ghost, 4)], []) => [spriteAt(EnemyKind.Ghost, 4.0, 0.0), spriteAt(EnemyKind.Imp, 2.0, 0.0)]
+
+fn inFront(cols: Vector<Column>, cx: Int, depth: Float) -> Bool
+    ? "Is something at this depth nearer than the wall in both dot columns of terminal column cx"
+    x0 = 2 * cx
+    Bool.and(columnAt(cols, x0).dist > depth, columnAt(cols, x0 + 1).dist > depth)
+
+verify inFront
+    inFront(Vector.fromList([Column.update(farColumn(), dist = 5.0), Column.update(farColumn(), dist = 5.0)]), 0, 3.0) => true
+    inFront(Vector.fromList([Column.update(farColumn(), dist = 5.0), Column.update(farColumn(), dist = 2.0)]), 0, 3.0) => false
+    inFront(Vector.fromList([Column.update(farColumn(), dist = 2.0), Column.update(farColumn(), dist = 5.0)]), 0, 3.0) => false
+
+fn spriteShows(s: Sprite, cols: Vector<Column>, cx: Int, cy: Int) -> Bool
+    ? "Is terminal cell (cx, cy) painted by this sprite: on screen, inside the silhouette, not behind a wall"
+    col = cx - s.left
+    row = cy - s.top
+    onScreen = Bool.and(Bool.and(cx >= 0, cx < screenW()), Bool.and(cy >= 0, cy < screenH()))
+    inRect = Bool.and(Bool.and(col >= 0, col < s.cols), Bool.and(row >= 0, row < s.rows))
+    match Bool.and(onScreen, inRect)
+        false -> false
+        true -> match Texture.isInsideShape(s.kind, col, row, s.cols, s.rows)
+            true -> inFront(cols, cx, s.depth)
+            false -> false
+
+verify spriteShows
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 10) => true
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 25) => false
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 20, 5) => false
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 17) => false
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 2) => false
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 45, 10) => false
+    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([Column.update(farColumn(), dist = 1.0)]), 0, 10) => false
