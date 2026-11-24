@@ -2674,12 +2674,17 @@ fn emit_hash_record(
                 // injected by `emit_helper_bodies` from list_helpers;
                 // carriers (Option/Result/Tuple) come from
                 // `carrier_eq_hash`.
-                let lookup_key = if other.starts_with("List<") || other.starts_with("Vector<") {
+                // A `Map<K,V>` field dispatches to that instantiation's
+                // structural eq + hash (`MapHelperRegistry::kv`), surfaced in
+                // `all_key_helpers` as the sum-variant field path uses it.
+                let is_compound = other.starts_with("List<")
+                    || other.starts_with("Vector<")
+                    || other.starts_with("Map<");
+                let lookup_key = if is_compound {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
-                let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
                 let is_carrier = other.starts_with("Option<")
                     || other.starts_with("Result<")
                     || other.starts_with("Tuple<");
@@ -2694,15 +2699,15 @@ fn emit_hash_record(
                         .get(&lookup_key)
                         .ok_or(WasmGcError::Validation(format!(
                             "hash_record: field `{other}` has no key helpers \
-                             (record / list / vector / sum / Option / Result / Tuple T \
+                             (record / list / vector / map / sum / Option / Result / Tuple T \
                               may need force-registration)"
                         )))?;
                     f.instruction(&Instruction::Call(inner.hash));
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum, \
-                          Option/Result/Tuple}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, Map<K, V>, \
+                          sum, Option/Result/Tuple}",
                     ));
                 }
             }
@@ -2777,12 +2782,17 @@ fn emit_eq_record(
                 f.instruction(&Instruction::Call(helpers.eq));
             }
             other => {
-                let lookup_key = if other.starts_with("List<") || other.starts_with("Vector<") {
+                // A `Map<K,V>` field dispatches to that instantiation's
+                // structural eq + hash (`MapHelperRegistry::kv`), surfaced in
+                // `all_key_helpers` as the sum-variant field path uses it.
+                let is_compound = other.starts_with("List<")
+                    || other.starts_with("Vector<")
+                    || other.starts_with("Map<");
+                let lookup_key = if is_compound {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
-                let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
                 let is_carrier = other.starts_with("Option<")
                     || other.starts_with("Result<")
                     || other.starts_with("Tuple<");
@@ -2802,8 +2812,8 @@ fn emit_eq_record(
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum, \
-                          Option/Result/Tuple}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, Map<K, V>, \
+                          sum, Option/Result/Tuple}",
                     ));
                 }
             }

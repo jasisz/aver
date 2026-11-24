@@ -1,0 +1,61 @@
+module Values
+    intent = "Map values whose records hold maps or bytes, and maps of maps of bytes."
+    depends [Bytes]
+    effects [Console.print]
+
+record Facts
+    seen: Map<Int, Int>
+    names: Map<String, Bool>
+
+record Store
+    tag: Int
+    inner: Map<Int, Map<Int, Bytes>>
+
+record Blob
+    tag: Int
+    data: Bytes
+
+fn facts(n: Int) -> Facts
+    ? "Facts with n in both maps."
+    Facts(seen = Map.set({}, n, n * 2), names = Map.set({}, String.fromInt(n), true))
+
+fn seenOf(m: Map<Int, Facts>, k: Int) -> Int
+    ? "The value seen under k in the facts stored at k, or -1."
+    match Map.get(m, k)
+        Option.Some(f) -> Option.withDefault(Map.get(f.seen, k), -1)
+        Option.None -> -1
+
+fn byteAt(m: Map<Int, Map<Int, Bytes>>, i: Int, j: Int, at: Int) -> Int
+    ? "Byte at position at of the bytes stored at i, j, or -1."
+    match Map.get(m, i)
+        Option.Some(inner) -> match Map.get(inner, j)
+            Option.Some(b) -> Option.withDefault(Bytes.get(b, at), -1)
+            Option.None -> -1
+        Option.None -> -1
+
+fn blobLen(m: Map<String, Blob>, k: String) -> Int
+    ? "Length of the blob data stored at k, or -1."
+    match Map.get(m, k)
+        Option.Some(b) -> Bytes.len(b.data)
+        Option.None -> -1
+
+fn storeTag(m: Map<Int, Store>, k: Int) -> Int
+    ? "The tag of the store at k, or -1."
+    match Map.get(m, k)
+        Option.Some(s) -> s.tag
+        Option.None -> -1
+
+fn main() -> Unit
+    ? "Store and read back nested values."
+    ! [Console.print]
+    byFacts = Map.set(Map.set({}, 1, facts(1)), 2, facts(2))
+    Console.print("facts: {seenOf(byFacts, 1)} {seenOf(byFacts, 2)} {seenOf(byFacts, 3)} len {Map.len(byFacts)}")
+    nested = Map.set({}, 7, Map.set(Map.set({}, 1, Bytes.fromList([10, 20])), 2, Bytes.fromList([30])))
+    Console.print("bytes: {byteAt(nested, 7, 1, 1)} {byteAt(nested, 7, 2, 0)} {byteAt(nested, 7, 3, 0)} {byteAt(nested, 8, 1, 0)}")
+    blobs = Map.set(Map.set({}, "a", Blob(tag = 1, data = Bytes.fromList([5, 6, 7]))), "b", Blob(tag = 2, data = Bytes.fromList([])))
+    Console.print("blobs: {blobLen(blobs, "a")} len {Map.len(blobs)}")
+    keyed = Map.set(Map.set({}, Blob(tag = 1, data = Bytes.fromList([1])), "one"), Blob(tag = 1, data = Bytes.fromList([2])), "two")
+    Console.print("keyed: {Option.withDefault(Map.get(keyed, Blob(tag = 1, data = Bytes.fromList([2]))), "none")} len {Map.len(keyed)}")
+    Console.print("equal: {byFacts == Map.set(Map.set({}, 2, facts(2)), 1, facts(1))} {byFacts == Map.set(byFacts, 2, facts(3))} {nested == nested} {blobs == Map.remove(blobs, "b")}")
+    stores = Map.set({}, 1, Store(tag = 1, inner = nested))
+    Console.print("stores: {storeTag(stores, 1)} equal {stores == Map.set({}, 1, Store(tag = 1, inner = nested))} {stores == Map.set({}, 1, Store(tag = 1, inner = Map.remove(nested, 7)))}")
