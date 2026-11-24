@@ -64,3 +64,12 @@ fn dist(x1: Float, y1: Float, x2: Float, y2: Float) -> Float
 verify dist
     dist(0.0, 0.0, 3.0, 4.0) => 5.0
     dist(1.0, 1.0, 1.0, 1.0) => 0.0
+
+fn frac(x: Float) -> Float
+    ? "Fractional part of x, in [0, 1) for negative x too"
+    x - Float.fromInt(Float.floor(x))
+
+verify frac
+    frac(2.25) => 0.25
+    frac(3.0) => 0.0
+    frac(0.0 - 0.25) => 0.75

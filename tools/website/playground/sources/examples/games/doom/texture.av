@@ -1,0 +1,274 @@
+module Texture
+    intent =
+        "What is drawn with Braille dots: the dot-to-glyph encoding, wall textures"
+        "in wall coordinates, the floor dither, distance shading and enemy silhouettes."
+    depends [Types, Math]
+    effects []
+
+decision TexturesLiveOnTheWall
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "The old patterns were a function of the dot row inside a terminal cell,"
+        "so every cell of a wall repeated the same four rows at any distance,"
+        "and nothing depended on the position along the wall: bricks had no vertical joints."
+        "A texture is now a function of (u, v) on the wall face, u along it and v down it."
+        "Bricks shrink with distance, keep their place as the player moves, and show where a wall turns a corner."
+        "A wall too small on screen to hold the detail is filled solid instead of aliasing."
+    chosen = "WallCoordinates"
+    rejected = ["ScreenCellPatterns"]
+    impacts = [wallDot, brickDot, stoneDot, metalDot]
+
+decision DepthByDotDensity
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "Far walls were painted black, which on a dark terminal is not drawn at all:"
+        "the end of a corridor looked like an opening."
+        "Eight terminal colors give three useful brightness steps, so distance is also shown"
+        "by thinning the dots: every dot, every second, every fourth."
+        "The ceiling stays empty and the floor is a sparse dither, so the dense shapes on screen are walls."
+    chosen = "ThinDotsWithDistance"
+    rejected = ["BlackFarWalls", "DotsOnCeilingToo"]
+    impacts = [shadeDot, floorDot, wallColor]
+// ─── Braille encoding ──────────────────────────────────────────────────────
+
+fn brailleChar(bits: Int) -> String
+    ? "Glyph for an 8-dot pattern; a plain space when no dot is set"
+    match bits
+        0 -> " "
+        _ -> Option.withDefault(String.fromCodePoint(10240 + bits), " ")
+
+verify brailleChar
+    brailleChar(0) => " "
+    brailleChar(255) => "⣿"
+    brailleChar(1) => "⠁"
+    brailleChar(128) => "⢀"
+
+fn dotBit(sub: Int, row: Int) -> Int
+    ? "Bit of the dot in column sub (0 left, 1 right) and row 0..3 of a Braille cell"
+    match sub
+        0 -> match row
+            0 -> 1
+            1 -> 2
+            2 -> 4
+            3 -> 64
+            _ -> 0
+        _ -> match row
+            0 -> 8
+            1 -> 16
+            2 -> 32
+            3 -> 128
+            _ -> 0
+
+verify dotBit
+    dotBit(0, 0) => 1
+    dotBit(0, 3) => 64
+    dotBit(1, 0) => 8
+    dotBit(1, 3) => 128
+    dotBit(0, 4) => 0
+    dotBit(0, 0) + dotBit(0, 1) + dotBit(0, 2) + dotBit(0, 3) + dotBit(1, 0) + dotBit(1, 1) + dotBit(1, 2) + dotBit(1, 3) => 255
+
+// ─── Wall textures ─────────────────────────────────────────────────────────
+
+fn brickDot(u: Float, v: Float) -> Bool
+    ? "Brick: four courses, each shifted half a brick against the one above; mortar is unlit"
+    courses = v * 4.0
+    shift = match Int.mod(Float.floor(courses), 2)
+        0 -> 0.0
+        _ -> 0.5
+    Bool.and(Math.frac(courses) >= 0.2, Math.frac(u * 2.0 + shift) >= 0.1)
+
+verify brickDot
+    brickDot(0.3, 0.125) => true
+    brickDot(0.3, 0.01) => false
+    brickDot(0.01, 0.125) => false
+    brickDot(0.01, 0.375) => true
+    brickDot(0.26, 0.375) => false
+
+fn stoneDot(u: Float, v: Float) -> Bool
+    ? "Stone: two courses of blocks one tile long, the lower course shifted by a third"
+    courses = v * 2.0
+    shift = match Float.floor(courses)
+        0 -> 0.0
+        _ -> 0.35
+    Bool.and(Math.frac(courses) >= 0.08, Math.frac(u + shift) >= 0.07)
+
+verify stoneDot
+    stoneDot(0.5, 0.25) => true
+    stoneDot(0.5, 0.02) => false
+    stoneDot(0.02, 0.25) => false
+    stoneDot(0.02, 0.75) => true
+    stoneDot(0.67, 0.75) => false
+
+fn metalDot(u: Float, v: Float) -> Bool
+    ? "Metal: three upright panels per tile with a seam across the middle"
+    Bool.and(Math.frac(u * 3.0) >= 0.14, Float.abs(v - 0.5) >= 0.035)
+
+verify metalDot
+    metalDot(0.2, 0.2) => true
+    metalDot(0.01, 0.2) => false
+    metalDot(0.35, 0.2) => false
+    metalDot(0.2, 0.5) => false
+
+fn patternDot(wt: WallType, u: Float, v: Float) -> Bool
+    ? "Is the texture of a wall type lit at (u, v), both in [0, 1)"
+    match wt
+        WallType.Stone -> stoneDot(u, v)
+        WallType.Brick -> brickDot(u, v)
+        WallType.Metal -> metalDot(u, v)
+
+verify patternDot
+    patternDot(WallType.Stone, 0.5, 0.02) => false
+    patternDot(WallType.Brick, 0.3, 0.125) => true
+    patternDot(WallType.Metal, 0.2, 0.5) => false
+
+fn shadeDot(x: Int, y: Int, dist: Float) -> Bool
+    ? "Distance shading: near walls keep every dot, farther ones every second, the farthest every fourth"
+    match dist < 6.0
+        true -> true
+        false -> match dist < 11.0
+            true -> Int.mod(x + y, 2) == 0
+            false -> Int.mod(x + 2 * y, 4) == 0
+
+verify shadeDot
+    shadeDot(1, 0, 2.0) => true
+    shadeDot(1, 0, 8.0) => false
+    shadeDot(1, 1, 8.0) => true
+    shadeDot(2, 0, 15.0) => false
+    shadeDot(2, 1, 15.0) => true
+
+fn detailHeight() -> Int
+    ? "Wall height in dots below which a texture is too small to read and the wall is filled"
+    16
+
+verify detailHeight
+    detailHeight() => 16
+
+fn wallDot(wt: WallType, u: Float, v: Float, height: Int, x: Int, y: Int, dist: Float) -> Bool
+    ? "Is screen dot (x, y) lit, lying at (u, v) on a wall face that is height dots tall on screen"
+    match shadeDot(x, y, dist)
+        false -> false
+        true -> match height < detailHeight()
+            true -> true
+            false -> patternDot(wt, u, v)
+
+verify wallDot
+    wallDot(WallType.Brick, 0.3, 0.125, 40, 0, 0, 2.0) => true
+    wallDot(WallType.Brick, 0.3, 0.01, 40, 0, 0, 2.0) => false
+    wallDot(WallType.Brick, 0.3, 0.01, 10, 0, 0, 2.0) => true
+    wallDot(WallType.Brick, 0.3, 0.125, 40, 1, 0, 8.0) => false
+
+fn wallColor(dist: Float, face: Face) -> String
+    ? "Color of a wall: dimmer with distance, and north-south faces one step dimmer so corners show"
+    match dist < 3.5
+        true -> match face
+            Face.EastWest -> "white"
+            Face.NorthSouth -> "cyan"
+        false -> match dist < 8.0
+            true -> match face
+                Face.EastWest -> "cyan"
+                Face.NorthSouth -> "blue"
+            false -> "blue"
+
+verify wallColor
+    wallColor(1.0, Face.EastWest) => "white"
+    wallColor(1.0, Face.NorthSouth) => "cyan"
+    wallColor(5.0, Face.EastWest) => "cyan"
+    wallColor(5.0, Face.NorthSouth) => "blue"
+    wallColor(20.0, Face.EastWest) => "blue"
+
+fn floorDot(x: Int, y: Int, horizon: Int) -> Bool
+    ? "Floor dither: nothing near the horizon, then a slanted lattice that gets denser toward the bottom of the screen"
+    below = y - horizon
+    match below < 6
+        true -> false
+        false -> match below < 18
+            true -> Int.mod(x + 5 * y, 12) == 0
+            false -> match below < 30
+                true -> Int.mod(x + 3 * y, 7) == 0
+                false -> Int.mod(x + 2 * y, 4) == 0
+
+verify floorDot
+    floorDot(0, 42, 40) => false
+    floorDot(0, 48, 40) => true
+    floorDot(1, 48, 40) => false
+    floorDot(0, 63, 40) => true
+    floorDot(0, 72, 40) => true
+    floorDot(1, 72, 40) => false
+
+// ─── Enemy silhouettes ─────────────────────────────────────────────────────
+
+fn fullBlock() -> String
+    ? "Full block character U+2588"
+    "█"
+
+verify fullBlock
+    String.len(fullBlock()) => 1
+
+fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int) -> Bool
+    ? "Is cell (col, row) of a spriteW x spriteH sprite inside the enemy's silhouette"
+    halfW = Float.fromInt(spriteW) / 2.0
+    cx = Float.abs(Float.fromInt(col) - halfW + 0.5) / halfW
+    cy = (Float.fromInt(row) + 0.5) / Float.fromInt(spriteH)
+    cx < shapeWidth(kind, cy)
+
+verify isInsideShape
+    isInsideShape(EnemyKind.Demon, 5, 5, 10, 10) => true
+    isInsideShape(EnemyKind.Demon, 0, 0, 10, 10) => false
+    isInsideShape(EnemyKind.Imp, 0, 0, 1, 1) => true
+    isInsideShape(EnemyKind.Ghost, 0, 0, 1, 1) => true
+
+fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
+    ? "Silhouette half-width at normalized height (0 = top, 1 = bottom)"
+    match kind
+        EnemyKind.Imp -> impWidth(cy)
+        EnemyKind.Demon -> demonWidth(cy)
+        EnemyKind.Ghost -> ghostWidth(cy)
+
+verify shapeWidth
+    shapeWidth(EnemyKind.Ghost, 0.5) => 0.9
+    shapeWidth(EnemyKind.Imp, 0.5) => 0.75
+    shapeWidth(EnemyKind.Demon, 0.5) => 0.95
+
+fn impWidth(cy: Float) -> Float
+    ? "Imp: small head, thin neck, wide torso, narrow waist, legs"
+    match cy < 0.2
+        true -> 0.45
+        false -> match cy < 0.3
+            true -> 0.25
+            false -> match cy < 0.65
+                true -> 0.75
+                false -> match cy < 0.72
+                    true -> 0.4
+                    false -> 0.7
+
+verify impWidth
+    impWidth(0.1) => 0.45
+    impWidth(0.25) => 0.25
+    impWidth(0.5) => 0.75
+    impWidth(0.7) => 0.4
+    impWidth(0.9) => 0.7
+
+fn demonWidth(cy: Float) -> Float
+    ? "Demon: massive — wide head, huge body, thick legs"
+    match cy < 0.15
+        true -> 0.7
+        false -> match cy < 0.75
+            true -> 0.95
+            false -> 0.75
+
+verify demonWidth
+    demonWidth(0.1) => 0.7
+    demonWidth(0.5) => 0.95
+    demonWidth(0.9) => 0.75
+
+fn ghostWidth(cy: Float) -> Float
+    ? "Ghost: a round body, widest in the middle"
+    t = cy * 2.0 - 1.0
+    Float.sqrt(Float.max(0.0, 1.0 - t * t)) * 0.9
+
+verify ghostWidth
+    ghostWidth(0.5) => 0.9
+    ghostWidth(0.0) => 0.0
+    ghostWidth(1.0) => 0.0

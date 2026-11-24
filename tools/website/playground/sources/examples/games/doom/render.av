@@ -1,706 +1,349 @@
 module Render
     intent =
-        "Braille-based raycasting renderer with wall textures, enemy sprites,"
-        "distance shading, HUD, and minimap with direction indicator."
-    depends [Math, Level, Types]
-    effects [Terminal]
+        "The effectful half of the renderer: prints the viewport rows, enemy sprites,"
+        "crosshair, status panel, minimap and messages, laid out for an 80 x 24 terminal."
+    depends [Types, Tiles, Ray, Enemy, View, Texture]
+    effects [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
 
-// ─── Screen constants ──────────────────────────────────────────────────────
+decision RowsPrintedAsRuns
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "The frame was printed cell by cell, column by column: a color change, a cursor move,"
+        "a print and a color reset for each of 1200 cells, about 4800 terminal operations per frame."
+        "Rows are now built as runs of equal color and printed with one cursor move per row"
+        "and one color change per run."
+        "The rows are data made by pure code in View, so verify can check a frame; printing is a thin loop."
+    chosen = "RunsPerRow"
+    rejected = ["CellByCell"]
+    impacts = [printRuns, renderView, renderMinimap]
 
-fn screenW() -> Int
-    ? "Terminal columns for the 3D viewport"
-    60
+decision LayoutFor80x24
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "The minimap was drawn in rows 15 to 30, below the bottom of a 24-row terminal"
+        "and of the playground's screen, and overlapped the place meant for messages."
+        "Messages about hits and damage were collected but never printed."
+        "The panel right of the viewport now holds title, health and the minimap in rows 0 to 19;"
+        "controls and the last three messages take rows 20 to 23 under the viewport."
+    chosen = "PanelRightMessagesBelow"
+    rejected = ["MinimapBelowControls"]
+    impacts = [renderHud, renderMinimap, renderMessages, panelX]
 
-verify screenW
-    screenW() => 60
+decision MinimapShowsOnlySeenEnemies
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "The minimap marked every enemy within eight tiles, through any wall,"
+        "so it answered what the 3D view is there to make the player find out."
+        "An enemy is marked only while there is line of sight from the player to it,"
+        "the same test the enemy uses to notice the player."
+    chosen = "LineOfSight"
+    rejected = ["AllNearbyEnemies"]
+    impacts = [seenEnemyAt, minimapCell]
 
 fn moveToChecked(x: Int, y: Int) -> Result<Unit, String>
     ? "Move the cursor and propagate a terminal error to the render caller."
     ! [Terminal.moveTo]
     Terminal.moveTo(x, y)
 
-fn screenH() -> Int
-    ? "Terminal rows for the 3D viewport"
-    20
+fn panelX() -> Int
+    ? "First terminal column of the panel right of the viewport"
+    View.screenW() + 2
 
-verify screenH
-    screenH() => 20
+verify panelX
+    panelX() => 62
 
-fn pixelH() -> Int
-    ? "Virtual pixel height = screenH * 4 (braille has 4 vertical dots)"
-    80
+fn printRuns(runs: List<Run>) -> Result<Unit, String>
+    ? "Print runs at the cursor, one color change per run"
+    ! [Terminal.print, Terminal.setColor]
+    match runs
+        [] -> Result.Ok(Unit)
+        [run, ..rest] -> printRun(run, rest)
 
-verify pixelH
-    pixelH() => 80
+fn printRun(run: Run, rest: List<Run>) -> Result<Unit, String>
+    ? "Print one run, then the rest"
+    ! [Terminal.print, Terminal.setColor]
+    Terminal.setColor(run.color)?
+    Terminal.print(run.text)?
+    printRuns(rest)
 
-fn fov() -> Float
-    ? "Horizontal field of view in radians (~60 degrees)"
-    Float.pi() / 3.0
+// ─── Viewport ──────────────────────────────────────────────────────────────
 
-verify fov
-    Float.round(fov() * 1000.0) => Float.round(Float.pi() / 3.0 * 1000.0)
+fn renderView(cols: Vector<Column>, row: Int) -> Result<Unit, String>
+    ? "Print the walls, floor and ceiling of the viewport from row down"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match row >= View.screenH()
+        true -> Result.Ok(Unit)
+        false -> renderViewRow(cols, row)
 
-// ─── Braille encoding ──────────────────────────────────────────────────────
+fn renderViewRow(cols: Vector<Column>, row: Int) -> Result<Unit, String>
+    ? "Print one viewport row, then the rows below"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    moveToChecked(0, row)?
+    printRuns(View.viewRow(cols, row, 0, []))?
+    renderView(cols, row + 1)
 
-fn brailleBase() -> Int
-    ? "Unicode code point for empty Braille pattern"
-    10240
+fn renderSprites(sprites: List<Sprite>, cols: Vector<Column>) -> Result<Unit, String>
+    ? "Paint enemy sprites in the order given: farthest first"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match sprites
+        [] -> Result.Ok(Unit)
+        [s, ..rest] -> renderSprite(s, rest, cols)
 
-verify brailleBase
-    brailleBase() => 10240
+fn renderSprite(s: Sprite, rest: List<Sprite>, cols: Vector<Column>) -> Result<Unit, String>
+    ? "Paint one sprite, then the nearer ones"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    Terminal.setColor(Types.enemyColor(s.kind))?
+    renderSpriteCells(s, cols, Int.max(0, s.top), Int.max(0, s.left))?
+    renderSprites(rest, cols)
 
-fn brailleChar(bits: Int) -> String
-    ? "Convert 8-bit pattern to Braille Unicode character"
-    match String.fromCodePoint(brailleBase() + bits)
-        Option.Some(ch) -> ch
-        Option.None -> " "
+fn renderSpriteCells(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int) -> Result<Unit, String>
+    ? "Walk the on-screen part of a sprite's rectangle from cell (cx, cy)"
+    ! [Terminal.moveTo, Terminal.print]
+    match cy >= Int.min(View.screenH(), s.top + s.rows)
+        true -> Result.Ok(Unit)
+        false -> match cx >= Int.min(View.screenW(), s.left + s.cols)
+            true -> renderSpriteCells(s, cols, cy + 1, Int.max(0, s.left))
+            false -> renderSpriteCell(s, cols, cy, cx)
 
-verify brailleChar
-    String.len(brailleChar(0)) => 1
+fn renderSpriteCell(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int) -> Result<Unit, String>
+    ? "Paint one sprite cell when the sprite shows there"
+    ! [Terminal.moveTo, Terminal.print]
+    match View.spriteShows(s, cols, cx, cy)
+        true -> paintSpriteCell(s, cols, cy, cx)
+        false -> renderSpriteCells(s, cols, cy, cx + 1)
 
-fn dotBit(row: Int) -> Int
-    ? "Bit value for left-column dot at vertical position 0..3"
-    match row
-        0 -> 1
-        1 -> 2
-        2 -> 4
-        3 -> 64
-        _ -> 0
+fn paintSpriteCell(s: Sprite, cols: Vector<Column>, cy: Int, cx: Int) -> Result<Unit, String>
+    ? "Print a full block at a sprite cell and go on"
+    ! [Terminal.moveTo, Terminal.print]
+    moveToChecked(cx, cy)?
+    Terminal.print(Texture.fullBlock())?
+    renderSpriteCells(s, cols, cy, cx + 1)
 
-verify dotBit
-    dotBit(0) => 1
-    dotBit(1) => 2
-    dotBit(2) => 4
-    dotBit(3) => 64
+fn crosshairColor(state: GameState) -> String
+    ? "Yellow while a shot would hit an enemy, white otherwise"
+    match Enemy.aimedAt(state.enemies, state.player, state.grid)
+        Option.Some(_) -> "yellow"
+        Option.None -> "white"
 
-fn dotBitRight(row: Int) -> Int
-    ? "Bit value for right-column dot at vertical position 0..3"
-    match row
-        0 -> 8
-        1 -> 16
-        2 -> 32
-        3 -> 128
-        _ -> 0
+verify crosshairColor
+    crosshairColor(GameState(grid = Tiles.gridOf(["....."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0)) => "yellow"
+    crosshairColor(GameState(grid = Tiles.gridOf(["....."]), player = Types.mkPlayer(0.5, 0.5), enemies = [], seed = 0, messages = [], status = Status.Playing, turnCount = 0)) => "white"
 
-verify dotBitRight
-    dotBitRight(0) => 8
-    dotBitRight(1) => 16
-    dotBitRight(2) => 32
-    dotBitRight(3) => 128
+fn renderCrosshair(state: GameState) -> Result<Unit, String>
+    ? "Draw the crosshair at the centre of the viewport"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    Terminal.setColor(crosshairColor(state))?
+    moveToChecked(Int.div(View.screenW(), 2), Int.div(View.screenH(), 2))?
+    Terminal.print("+")
 
-// ─── Raycasting with side detection ────────────────────────────────────────
+// ─── Status panel ──────────────────────────────────────────────────────────
 
-fn castRay(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, angle: Float) -> RayHit
-    ? "March a ray, return distance + wall hit info"
-    marchRay(levelMap, wallMap, px, py, Float.cos(angle), Float.sin(angle), 0.0, px, py)
-
-verify castRay
-    castRay(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 0.0).wallType => WallType.Stone
-
-fn marchRay(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, ox: Float, oy: Float) -> RayHit
-    ? "Step along the ray until hitting a wall or max distance"
-    match dist > 20.0
-        true -> RayHit(dist = 20.0, side = 0, wallType = WallType.Stone)
-        false -> marchCheck(levelMap, wallMap, px, py, dx, dy, dist, ox, oy)
-
-verify marchRay
-    marchRay(Level.buildMap(4, "....", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 1.0, 0.0, 21.0, 1.0, 1.0).dist => 20.0
-
-fn marchCheck(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, ox: Float, oy: Float) -> RayHit
-    ? "Check current ray position for wall hit"
-    cx = ox + dx * dist
-    cy = oy + dy * dist
-    mx = Float.floor(cx)
-    my = Float.floor(cy)
-    match Level.isWall(levelMap, mx, my)
-        true -> detectSide(wallMap, mx, my, ox, oy, dx, dy, dist)
-        false -> marchRay(levelMap, wallMap, px, py, dx, dy, dist + 0.04, ox, oy)
-
-verify marchCheck
-    marchCheck(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0).wallType => WallType.Stone
-
-fn detectSide(wallMap: List<String>, mx: Int, my: Int, ox: Float, oy: Float, dx: Float, dy: Float, dist: Float) -> RayHit
-    ? "Determine which side of the wall was hit (0=NS, 1=EW)"
-    prevDist = dist - 0.04
-    pmx = Float.floor(ox + dx * prevDist)
-    _pmy = Float.floor(oy + dy * prevDist)
-    side = match pmx == mx
-        true -> 0
-        false -> 1
-    wt = Level.wallTypeAt(wallMap, mx, my)
-    RayHit(dist = dist, side = side, wallType = wt)
-
-verify detectSide
-    detectSide(Level.buildMap(4, "SSSS", []), 0, 0, 0.0, 0.0, 1.0, 0.0, 0.04).side => 0
-
-// ─── Wall height ───────────────────────────────────────────────────────────
-
-fn wallHeight(distance: Float) -> Int
-    ? "Pixel height of the wall strip for a given corrected distance"
-    match distance < 0.1
-        true -> pixelH()
-        false -> Math.clampInt(Float.floor(Float.fromInt(pixelH()) / distance), 0, pixelH())
-
-verify wallHeight
-    wallHeight(1.0) => 80
-    wallHeight(0.05) => 80
-
-// ─── Textured braille ──────────────────────────────────────────────────────
-
-fn textureBits(wt: WallType, side: Int, pixY: Int, col: Int) -> Int
-    ? "Generate texture pattern bits for a wall pixel row"
-    match wt
-        WallType.Stone -> stoneBits(side, pixY)
-        WallType.Brick -> brickBits(side, pixY, col)
-        WallType.Metal -> metalBits(side, pixY)
-
-verify textureBits
-    textureBits(WallType.Stone, 0, 0, 0) => 1
-    textureBits(WallType.Brick, 0, 1, 0) => 2 + 16
-    textureBits(WallType.Metal, 1, 0, 0) => 8
-
-fn stoneBits(side: Int, pixY: Int) -> Int
-    ? "Stone: full fill, darker on EW side"
-    match side
-        1 -> dotBit(pixY) + dotBitRight(pixY)
-        _ -> dotBit(pixY)
-
-verify stoneBits
-    stoneBits(0, 0) => 1
-    stoneBits(1, 0) => 9
-
-fn brickBits(side: Int, pixY: Int, col: Int) -> Int
-    ? "Brick: alternating pattern like mortar lines"
-    isMortar = Int.mod(pixY, 3) == 0
-    match isMortar
-        true -> match side
-            1 -> dotBitRight(pixY)
-            _ -> 0
-        false -> dotBit(pixY) + dotBitRight(pixY)
-
-verify brickBits
-    brickBits(0, 0, 0) => 0
-    brickBits(0, 1, 0) => 2 + 16
-    brickBits(1, 0, 0) => 8
-
-fn metalBits(side: Int, pixY: Int) -> Int
-    ? "Metal: vertical stripes (left column only on NS)"
-    match side
-        1 -> dotBitRight(pixY)
-        _ -> dotBit(pixY) + dotBitRight(pixY)
-
-verify metalBits
-    metalBits(1, 0) => 8
-
-fn cellBitsTextured(wallTop: Int, wallBot: Int, pixY: Int, i: Int, acc: Int, wt: WallType, side: Int, col: Int) -> Int
-    ? "Accumulate 4 dot rows with texture pattern"
-    match i == 4
+fn repeat(s: String, n: Int, acc: String) -> String
+    ? "acc followed by n copies of s"
+    match n <= 0
         true -> acc
-        false -> cellBitsOneRow(wallTop, wallBot, pixY + i, i, acc, wt, side, col)
+        false -> repeat(s, n - 1, acc + s)
 
-verify cellBitsTextured
-    cellBitsTextured(0, 4, 0, 0, 0, WallType.Stone, 0, 0) => 135
+verify repeat
+    repeat("ab", 2, "x") => "xabab"
+    repeat("ab", 0, "x") => "x"
+    repeat("ab", 0 - 1, "x") => "x"
 
-fn cellBitsOneRow(wallTop: Int, wallBot: Int, y: Int, i: Int, acc: Int, wt: WallType, side: Int, col: Int) -> Int
-    ? "Add wall texture, floor or ceiling bits for one pixel row"
-    isWallPx = Bool.and(y >= wallTop, y < wallBot)
-    newAcc = match isWallPx
-        true -> acc + textureBits(wt, side, i, col)
-        false -> acc + floorCeilBit(y, i, wallTop, wallBot, col)
-    cellBitsTextured(wallTop, wallBot, y - i + i, i + 1, newAcc, wt, side, col)
+fn hpBar(hp: Int) -> String
+    ? "Ten-cell health bar; any health above zero shows at least one cell"
+    full = Int.max(0, Int.min(10, Int.div(hp + 9, 10)))
+    repeat("░", 10 - full, repeat("█", full, ""))
 
-verify cellBitsOneRow
-    cellBitsOneRow(0, 4, 0, 0, 0, WallType.Stone, 0, 0) => 135
+verify hpBar
+    hpBar(100) => "██████████"
+    hpBar(55) => "██████░░░░"
+    hpBar(1) => "█░░░░░░░░░"
+    hpBar(0) => "░░░░░░░░░░"
+    hpBar(0 - 5) => "░░░░░░░░░░"
+    hpBar(250) => "██████████"
 
-fn floorCeilBit(y: Int, i: Int, wallTop: Int, wallBot: Int, col: Int) -> Int
-    ? "Sparse dots for floor/ceiling gradient"
-    match y < wallTop
-        true -> ceilBit(y, i, col)
-        false -> match y >= wallBot
-            true -> floorBit(y, i, col)
-            false -> 0
+fn hpColor(hp: Int) -> String
+    ? "Health color: green, then yellow below half, red below a quarter"
+    match hp > 50
+        true -> "green"
+        false -> match hp > 25
+            true -> "yellow"
+            false -> "red"
 
-verify floorCeilBit
-    floorCeilBit(0, 0, 4, 8, 0) => 1
+verify hpColor
+    hpColor(100) => "green"
+    hpColor(50) => "yellow"
+    hpColor(25) => "red"
 
-fn ceilBit(y: Int, i: Int, col: Int) -> Int
-    ? "Ceiling: sparse dots near horizon, denser at top"
-    match y < 8
-        true -> dotBit(i)
-        false -> match Int.mod(y + col, 4) == 0
-            true -> dotBit(i)
-            false -> 0
+fn renderHud(state: GameState) -> Result<Unit, String>
+    ? "Draw title, health and enemy count in the panel, and the controls under the viewport"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    hp = Int.max(0, state.player.hp)
+    Terminal.setColor("yellow")?
+    moveToChecked(panelX(), 0)?
+    Terminal.print("BRAILLE DOOM")?
+    Terminal.setColor(hpColor(hp))?
+    moveToChecked(panelX(), 1)?
+    Terminal.print("HP {hpBar(hp)} {hp}")?
+    Terminal.setColor("white")?
+    moveToChecked(panelX(), 2)?
+    Terminal.print("enemies: {List.len(state.enemies)}")?
+    Terminal.setColor("cyan")?
+    moveToChecked(0, View.screenH())?
+    Terminal.print("W/S move  A/D strafe  ←/→ turn  Q/E turn+walk  SPACE fire  X quit")
 
-verify ceilBit
-    ceilBit(0, 0, 0) => 1
+fn renderMessages(msgs: List<String>, i: Int) -> Result<Unit, String>
+    ? "Show the recent messages under the controls, oldest first"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match msgs
+        [] -> Result.Ok(Unit)
+        [msg, ..rest] -> renderMessage(msg, rest, i)
 
-fn floorBit(y: Int, i: Int, col: Int) -> Int
-    ? "Floor: sparse dots near horizon, denser at bottom"
-    match y > 72
-        true -> dotBitRight(i)
-        false -> match Int.mod(y + col, 3) == 0
-            true -> dotBitRight(i)
-            false -> 0
+fn renderMessage(msg: String, rest: List<String>, i: Int) -> Result<Unit, String>
+    ? "Print message i on its own line, then the later ones"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    Terminal.setColor("yellow")?
+    moveToChecked(0, View.screenH() + 1 + i)?
+    Terminal.print(msg)?
+    renderMessages(rest, i + 1)
 
-verify floorBit
-    floorBit(79, 0, 0) => 8
+// ─── Minimap ───────────────────────────────────────────────────────────────
 
-fn columnBraille(wallTop: Int, wallBot: Int, row: Int, wt: WallType, side: Int, col: Int) -> String
-    ? "Compute one textured Braille character"
-    bits = cellBitsTextured(wallTop, wallBot, row * 4, 0, 0, wt, side, col)
-    brailleChar(bits)
+fn mapSize() -> Int
+    ? "Width and height of the minimap in tiles, centred on the player"
+    16
 
-verify columnBraille
-    String.len(columnBraille(0, 4, 0, WallType.Stone, 0, 0)) => 1
+verify mapSize
+    mapSize() => 16
 
-// ─── Shading ───────────────────────────────────────────────────────────────
+fn seenEnemyAt(enemies: List<Enemy>, player: Player, grid: Grid, mx: Int, my: Int) -> Option<EnemyKind>
+    ? "Kind of an enemy standing on tile (mx, my) that the player has line of sight to"
+    match enemies
+        [] -> Option.None
+        [e, ..rest] -> match Bool.and(Float.floor(e.x) == mx, Float.floor(e.y) == my)
+            false -> seenEnemyAt(rest, player, grid, mx, my)
+            true -> match Ray.lineOfSight(grid, player.x, player.y, e.x, e.y)
+                true -> Option.Some(e.kind)
+                false -> seenEnemyAt(rest, player, grid, mx, my)
 
-fn shadeColor(distance: Float, side: Int) -> String
-    ? "Color based on distance and hit side"
-    match distance < 2.5
-        true -> match side
-            1 -> "white"
-            _ -> "cyan"
-        false -> match distance < 5.0
-            true -> match side
-                1 -> "cyan"
-                _ -> "blue"
-            false -> match distance < 9.0
-                true -> "blue"
-                false -> "black"
+verify seenEnemyAt
+    seenEnemyAt([], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 3, 0) => Option.None
+    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Ghost, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 3, 0) => Option.Some(EnemyKind.Ghost)
+    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Ghost, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 2, 0) => Option.None
+    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Ghost, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."]), 3, 0) => Option.None
 
-verify shadeColor
-    shadeColor(1.0, 1) => "white"
-    shadeColor(1.0, 0) => "cyan"
-    shadeColor(20.0, 0) => "black"
+fn minimapCell(state: GameState, mx: Int, my: Int) -> Run
+    ? "One minimap tile: the player's arrow, a seen enemy, wall, or open floor"
+    isPlayer = Bool.and(Float.floor(state.player.x) == mx, Float.floor(state.player.y) == my)
+    match isPlayer
+        true -> Run(color = "yellow", text = Types.dirArrow(state.player.angle))
+        false -> match seenEnemyAt(state.enemies, state.player, state.grid, mx, my)
+            Option.Some(kind) -> Run(color = Types.enemyColor(kind), text = "*")
+            Option.None -> match Tiles.solid(state.grid, mx, my)
+                true -> Run(color = "green", text = "#")
+                false -> Run(color = "green", text = " ")
 
-// ─── Z-buffer pass ─────────────────────────────────────────────────────────
+verify minimapCell
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 0, 0) => Run(color = "yellow", text = "→")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 2, 0) => Run(color = "red", text = "*")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 3, 0) => Run(color = "green", text = "#")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 4, 0) => Run(color = "green", text = " ")
 
-fn buildZBuffer(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, angle: Float, col: Int, acc: List<RayHit>) -> List<RayHit>
-    ? "Cast all rays and collect RayHit per column"
-    match col == screenW()
-        true -> acc
-        false -> buildZBufferCol(levelMap, wallMap, px, py, angle, col, acc)
+fn minimapRow(state: GameState, my: Int, mx: Int, endX: Int, acc: List<Run>) -> List<Run>
+    ? "Minimap tiles mx..endX-1 of map row my as runs"
+    cell = minimapCell(state, mx, my)
+    match mx >= endX
+        true -> List.reverse(acc)
+        false -> minimapRow(state, my, mx + 1, endX, View.pushCell(acc, cell.color, cell.text))
 
-verify buildZBuffer
-    List.len(buildZBuffer(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 0.0, 0, [])) => screenW()
+verify minimapRow
+    minimapRow(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 0, 0, 5, []) => [Run(color = "yellow", text = "→  "), Run(color = "green", text = "# ")]
+    minimapRow(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 0, 5, 5, []) => []
 
-fn buildZBufferCol(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, angle: Float, col: Int, acc: List<RayHit>) -> List<RayHit>
-    ? "Cast one ray and append to buffer"
-    rayAngle = angle - fov() / 2.0 + Float.fromInt(col) * fov() / Float.fromInt(screenW())
-    hit = castRay(levelMap, wallMap, px, py, rayAngle)
-    corrected = RayHit.update(hit, dist = hit.dist * Float.cos(rayAngle - angle))
-    buildZBuffer(levelMap, wallMap, px, py, angle, col + 1, List.concat(acc, [corrected]))
+fn renderMinimap(state: GameState, row: Int) -> Result<Unit, String>
+    ? "Draw the minimap in the panel from row down"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match row >= mapSize()
+        true -> Result.Ok(Unit)
+        false -> renderMinimapRow(state, row)
 
-verify buildZBufferCol
-    List.len(buildZBufferCol(Level.buildMap(4, "####", []), Level.buildMap(4, "SSSS", []), 1.0, 1.0, 0.0, 0, [])) => screenW()
+fn renderMinimapRow(state: GameState, row: Int) -> Result<Unit, String>
+    ? "Draw one minimap row, then the rows below"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    half = Int.div(mapSize(), 2)
+    left = Float.floor(state.player.x) - half
+    moveToChecked(panelX(), 4 + row)?
+    printRuns(minimapRow(state, Float.floor(state.player.y) - half + row, left, left + mapSize(), []))?
+    renderMinimap(state, row + 1)
 
-// ─── Wall rendering ────────────────────────────────────────────────────────
+// ─── End of game ───────────────────────────────────────────────────────────
 
-fn renderWalls(zbuf: List<RayHit>, col: Int) -> Result<Unit, String>
-    ? "Render all wall columns from the z-buffer"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderWallsVec(Vector.fromList(zbuf), col)
+fn bannerText(status: Status) -> String
+    ? "Headline shown over the viewport when the game has ended"
+    match status
+        Status.Playing -> ""
+        Status.Dead -> "YOU DIED"
+        Status.Cleared -> "AREA CLEAR"
 
-fn renderWallsVec(zbuf: Vector<RayHit>, col: Int) -> Result<Unit, String>
-    ? "Render all wall columns from the z-buffer vector"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match col == screenW()
-        true -> Terminal.print("")
-        false -> match Vector.get(zbuf, col)
-            Option.Some(hit) -> renderWallCol(zbuf, col, hit)
-            Option.None -> renderWallsVec(zbuf, col + 1)
+verify bannerText
+    bannerText(Status.Playing) => ""
+    bannerText(Status.Dead) => "YOU DIED"
+    bannerText(Status.Cleared) => "AREA CLEAR"
 
-fn renderWallCol(zbuf: Vector<RayHit>, col: Int, hit: RayHit) -> Result<Unit, String>
-    ? "Render one wall column with ceiling, wall, floor colors"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    wh = wallHeight(hit.dist)
-    wTop = Int.div(pixelH() - wh, 2)
-    wBot = wTop + wh
-    wallColor = shadeColor(hit.dist, hit.side)
-    renderWallRows(col, wTop, wBot, hit.wallType, hit.side, 0, wallColor)?
-    renderWallsVec(zbuf, col + 1)
+fn bannerColor(status: Status) -> String
+    ? "Color of the end-of-game headline"
+    match status
+        Status.Dead -> "red"
+        _ -> "green"
 
-fn renderWallRows(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int, wallColor: String) -> Result<Unit, String>
-    ? "Render all rows for a single wall column"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match row == screenH()
-        true -> Terminal.print("")
-        false -> renderOneWallRow(col, wallTop, wallBot, wt, side, row, wallColor)
+verify bannerColor
+    bannerColor(Status.Dead) => "red"
+    bannerColor(Status.Cleared) => "green"
 
-fn rowZone(row: Int, wallTop: Int, wallBot: Int) -> Int
-    ? "0=ceiling, 1=wall, 2=floor based on pixel position"
-    midPx = row * 4 + 2
-    match midPx < wallTop
-        true -> 0
-        false -> match midPx >= wallBot
-            true -> 2
-            false -> 1
+fn centred(text: String) -> Int
+    ? "Terminal column at which text is centred in the viewport"
+    Int.div(View.screenW() - String.len(text), 2)
 
-verify rowZone
-    rowZone(0, 4, 8) => 0
-    rowZone(2, 4, 8) => 2
+verify centred
+    centred("YOU DIED") => 26
+    centred("") => 30
 
-fn renderOneWallRow(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: Int, row: Int, wallColor: String) -> Result<Unit, String>
-    ? "Render one braille cell with zone-based coloring"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    ch = columnBraille(wallTop, wallBot, row, wt, side, col)
-    zone = rowZone(row, wallTop, wallBot)
-    color = match zone
-        0 -> "blue"
-        2 -> "green"
-        _ -> wallColor
-    Terminal.setColor(color)?
-    moveToChecked(col, row)?
-    Terminal.print(ch)?
-    Terminal.resetColor()?
-    renderWallRows(col, wallTop, wallBot, wt, side, row + 1, wallColor)
+fn renderBanner(status: Status) -> Result<Unit, String>
+    ? "Draw the end-of-game headline and what to press, or nothing while playing"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    match status
+        Status.Playing -> Result.Ok(Unit)
+        _ -> renderBannerLines(status)
 
-// ─── Enemy sprite rendering ───────────────────────────────────────────────
-
-fn renderEnemies(enemies: List<Enemy>, zbuf: List<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Result<Unit, String>
-    ? "Render all enemies as sprites in the 3D view"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderEnemiesVec(Vector.fromList(enemies), Vector.fromList(zbuf), px, py, pAngle, i)
-
-fn renderEnemiesVec(enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Result<Unit, String>
-    ? "Render all enemies as sprites using indexed vectors"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match i == Vector.len(enemies)
-        true -> Terminal.print("")
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> renderEnemySprite(enemies, zbuf, px, py, pAngle, i, e)
-            Option.None -> renderEnemiesVec(enemies, zbuf, px, py, pAngle, i + 1)
-
-fn renderEnemySprite(enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py: Float, pAngle: Float, i: Int, e: Enemy) -> Result<Unit, String>
-    ? "Render one enemy as a character in the 3D view if visible"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    dx = e.x - px
-    dy = e.y - py
-    eDist = Math.dist(px, py, e.x, e.y)
-    eAngle = Float.atan2(dy, dx)
-    relAngle = Math.normalizeAngle(eAngle - pAngle + Float.pi()) - Float.pi()
-    screenCol = Float.floor(Float.fromInt(screenW()) / 2.0 + relAngle * Float.fromInt(screenW()) / fov())
-    match isEnemyVisibleVec(screenCol, eDist, zbuf)
-        true -> drawEnemyChar(e, screenCol, eDist, enemies, zbuf, px, py, pAngle, i)
-        false -> renderEnemiesVec(enemies, zbuf, px, py, pAngle, i + 1)
-
-fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
-    ? "Check if enemy column is on screen and in front of walls"
-    isEnemyVisibleVec(screenCol, eDist, Vector.fromList(zbuf))
-
-verify isEnemyVisible
-    isEnemyVisible(0, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => true
-    isEnemyVisible(0 - 1, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
-    isEnemyVisible(0, 0.1, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
-
-fn isEnemyVisibleVec(screenCol: Int, eDist: Float, zbuf: Vector<RayHit>) -> Bool
-    ? "Check if enemy column is on screen and in front of walls using z-buffer vector"
-    match screenCol < 0
-        true -> false
-        false -> match screenCol >= screenW()
-            true -> false
-            false -> match eDist < 0.3
-                true -> false
-                false -> match Vector.get(zbuf, screenCol)
-                    Option.Some(hit) -> eDist < hit.dist
-                    Option.None -> false
-
-verify isEnemyVisibleVec
-    isEnemyVisibleVec(0, 1.0, Vector.fromList([RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)])) => true
-    isEnemyVisibleVec(0 - 1, 1.0, Vector.fromList([RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)])) => false
-    isEnemyVisibleVec(0, 0.1, Vector.fromList([RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)])) => false
-
-fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Result<Unit, String>
-    ? "Draw enemy using solid Unicode block characters"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    spriteH = Math.clampInt(Float.floor(2.5 / eDist * Float.fromInt(screenH())), 1, 10)
-    spriteW = Math.clampInt(Float.floor(5.0 / eDist * Float.fromInt(screenW()) / 10.0), 3, 13)
-    topRow = Int.div(screenH(), 2) - Int.div(spriteH, 2)
-    leftCol = screenCol - Int.div(spriteW, 2)
-    drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0)?
-    Terminal.resetColor()?
-    renderEnemiesVec(enemies, zbuf, px, py, pAngle, i + 1)
-
-fn drawBlockGrid(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Iterate sprite grid"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match row == spriteH
-        true -> Terminal.print("")
-        false -> match col == spriteW
-            true -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row + 1, 0)
-            false -> drawBlockPixel(e, leftCol, topRow, spriteH, spriteW, row, col)
-
-fn drawBlockPixel(e: Enemy, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Draw one block character if on screen"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    sx = leftCol + col
-    sy = Math.clampInt(topRow + row, 0, screenH() - 1)
-    match Bool.and(sx >= 0, sx < screenW())
-        true -> drawBlockCell(e, sx, sy, row, col, spriteH, spriteW, leftCol, topRow)
-        false -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1)
-
-fn drawBlockCell(e: Enemy, sx: Int, sy: Int, row: Int, col: Int, spriteH: Int, spriteW: Int, leftCol: Int, topRow: Int) -> Result<Unit, String>
-    ? "Render one sprite cell using silhouette test"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match isInsideShape(e.kind, col, row, spriteW, spriteH)
-        true -> drawBlockPrint(e, sx, sy, leftCol, topRow, spriteH, spriteW, row, col)
-        false -> drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1)
-
-fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, leftCol: Int, topRow: Int, spriteH: Int, spriteW: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Print a full block at sprite position"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(Types.enemyColor(e.kind))?
-    moveToChecked(sx, sy)?
-    Terminal.print(fullBlock())?
-    drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1)
-
-// ─── Silhouette shapes ─────────────────────────────────────────────────────
-
-fn fullBlock() -> String
-    ? "Full block character U+2588"
-    match String.fromCodePoint(9608)
-        Option.Some(c) -> c
-        Option.None -> "#"
-
-verify fullBlock
-    String.len(fullBlock()) => 1
-
-fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int) -> Bool
-    ? "Check if (col, row) is inside the enemy silhouette"
-    halfW = Float.fromInt(spriteW) / 2.0
-    cx = Float.abs(Float.fromInt(col) - halfW + 0.5) / halfW
-    cy = Float.fromInt(row) / Float.fromInt(spriteH)
-    maxW = shapeWidth(kind, cy)
-    cx < maxW
-
-verify isInsideShape
-    isInsideShape(EnemyKind.Demon, 5, 5, 10, 10) => true
-    isInsideShape(EnemyKind.Demon, 0, 0, 10, 10) => false
-
-fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
-    ? "Silhouette width at normalized Y (0=top, 1=bottom)"
-    match kind
-        EnemyKind.Imp -> impWidth(cy)
-        EnemyKind.Demon -> demonWidth(cy)
-        EnemyKind.Ghost -> ghostWidth(cy)
-
-verify shapeWidth
-    shapeWidth(EnemyKind.Ghost, 0.5) => 0.85
-    shapeWidth(EnemyKind.Imp, 0.5) => 0.55
-    shapeWidth(EnemyKind.Demon, 0.5) => 0.95
-
-fn impWidth(cy: Float) -> Float
-    ? "Imp: humanoid — small head, neck, wide torso, legs with gap"
-    match cy < 0.2
-        true -> 0.35
-        false -> match cy < 0.3
-            true -> 0.2
-            false -> match cy < 0.65
-                true -> 0.55
-                false -> match cy < 0.72
-                    true -> 0.3
-                    false -> 0.55
-
-verify impWidth
-    impWidth(0.1) => 0.35
-    impWidth(0.5) => 0.55
-
-fn demonWidth(cy: Float) -> Float
-    ? "Demon: massive — wide head, huge body, thick legs"
-    match cy < 0.15
-        true -> 0.7
-        false -> match cy < 0.75
-            true -> 0.95
-            false -> 0.75
-
-verify demonWidth
-    demonWidth(0.5) => 0.95
-
-fn ghostWidth(cy: Float) -> Float
-    ? "Ghost: smooth oval sphere"
-    t = cy * 2.0 - 1.0
-    sq = 1.0 - t * t
-    match sq < 0.01
-        true -> 0.0
-        false -> Float.sqrt(sq) * 0.85
-
-verify ghostWidth
-    ghostWidth(0.5) => 0.85
+fn renderBannerLines(status: Status) -> Result<Unit, String>
+    ? "Draw the two lines of the end-of-game banner"
+    ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
+    title = "  {bannerText(status)}  "
+    prompt = "  R new level   X quit  "
+    Terminal.setColor(bannerColor(status))?
+    moveToChecked(centred(title), 8)?
+    Terminal.print(title)?
+    Terminal.setColor("white")?
+    moveToChecked(centred(prompt), 10)?
+    Terminal.print(prompt)
 
 // ─── Full frame ────────────────────────────────────────────────────────────
 
 fn renderFrame(state: GameState) -> Result<Unit, String>
-    ? "Render the full 3D viewport, enemies, HUD, and minimap"
+    ? "Render viewport, enemies, crosshair, panel, minimap and messages"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    zbuf = buildZBuffer(state.levelMap, state.wallMap, state.player.x, state.player.y, state.player.angle, 0, [])
-    zbufVec = Vector.fromList(zbuf)
-    enemyVec = Vector.fromList(state.enemies)
-    renderWallsVec(zbufVec, 0)?
-    renderEnemiesVec(enemyVec, zbufVec, state.player.x, state.player.y, state.player.angle, 0)?
-    renderCrosshair()?
+    cols = View.columns(state.grid, state.player, 0, [])
+    renderView(cols, 0)?
+    renderSprites(View.sprites(state.player, state.enemies, []), cols)?
+    renderCrosshair(state)?
     renderHud(state)?
-    renderMinimapVec(state, enemyVec)?
-    Terminal.flush()
-
-fn renderCrosshair() -> Result<Unit, String>
-    ? "Draw a crosshair at screen center"
-    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")?
-    moveToChecked(Int.div(screenW(), 2), Int.div(screenH(), 2))?
-    Terminal.print("+")?
-    Terminal.resetColor()
-
-// ─── HUD ───────────────────────────────────────────────────────────────────
-
-fn renderHud(state: GameState) -> Result<Unit, String>
-    ? "Draw position info, HP, and controls"
-    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    hudX = screenW() + 2
-    Terminal.setColor("yellow")?
-    moveToChecked(hudX, 1)?
-    Terminal.print("BRAILLE DOOM")?
-    Terminal.setColor("red")?
-    moveToChecked(hudX, 3)?
-    Terminal.print("HP: {String.fromInt(state.player.hp)}/100")?
-    Terminal.setColor("white")?
-    moveToChecked(hudX, 4)?
-    deg = Float.floor(Math.radToDeg(state.player.angle))
-    Terminal.print("angle: {String.fromInt(deg)}")?
-    moveToChecked(hudX, 5)?
-    Terminal.print("enemies: {String.fromInt(List.len(state.enemies))}")?
-    Terminal.setColor("cyan")?
-    moveToChecked(hudX, 7)?
-    Terminal.print("W/S  forward/back")?
-    moveToChecked(hudX, 8)?
-    Terminal.print("A/D  strafe")?
-    moveToChecked(hudX, 9)?
-    Terminal.print(",/.  rotate")?
-    moveToChecked(hudX, 10)?
-    Terminal.print("Q/E  turn+walk")?
-    moveToChecked(hudX, 11)?
-    Terminal.print("SPACE shoot")?
-    moveToChecked(hudX, 12)?
-    Terminal.print("X/ESC quit")?
-    Terminal.resetColor()
-
-fn renderMessages(msgs: List<String>, hudX: Int, i: Int) -> Result<Unit, String>
-    ? "Show recent messages below controls"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderMessagesVec(Vector.fromList(msgs), hudX, i)
-
-fn renderMessagesVec(msgs: Vector<String>, hudX: Int, i: Int) -> Result<Unit, String>
-    ? "Show recent messages below controls using indexed vector access"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match i == Vector.len(msgs)
-        true -> Terminal.print("")
-        false -> match Vector.get(msgs, i)
-            Option.Some(msg) -> renderOneMessage(msgs, hudX, i, msg)
-            Option.None -> Terminal.print("")
-
-fn renderOneMessage(msgs: Vector<String>, hudX: Int, i: Int, msg: String) -> Result<Unit, String>
-    ? "Render one message line"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("yellow")?
-    moveToChecked(hudX, 14 + i)?
-    Terminal.print(msg)?
+    renderMinimap(state, 0)?
+    renderMessages(state.messages, 0)?
+    renderBanner(state.status)?
     Terminal.resetColor()?
-    renderMessagesVec(msgs, hudX, i + 1)
-
-// ─── Minimap with direction ────────────────────────────────────────────────
-
-fn renderMinimap(state: GameState) -> Result<Unit, String>
-    ? "Draw a small ASCII minimap with player direction and enemies"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderMinimapVec(state, Vector.fromList(state.enemies))
-
-fn renderMinimapVec(state: GameState, enemies: Vector<Enemy>) -> Result<Unit, String>
-    ? "Draw a small ASCII minimap with player direction and enemy vector"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    ox = Float.floor(state.player.x) - 8
-    oy = Float.floor(state.player.y) - 8
-    renderMinimapRows(state, enemies, ox, oy, 0)
-
-fn renderMinimapRows(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int) -> Result<Unit, String>
-    ? "Render minimap rows (16x16 viewport centered on player)"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match row == 16
-        true -> Terminal.print("")
-        false -> renderMinimapRow(state, enemies, ox, oy, row)
-
-fn renderMinimapRow(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int) -> Result<Unit, String>
-    ? "Render one minimap row"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    moveToChecked(screenW() + 2, 15 + row)?
-    renderMinimapCols(state, enemies, ox, oy, row, 0)?
-    renderMinimapRows(state, enemies, ox, oy, row + 1)
-
-fn renderMinimapCols(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Render minimap columns"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match col == 16
-        true -> Terminal.print("")
-        false -> renderMinimapCell(state, ox + col, oy + row, enemies, ox, oy, row, col)
-
-fn renderMinimapCell(state: GameState, mx: Int, my: Int, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Render one minimap cell: player, enemy, wall, or floor"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    isPlayer = Bool.and(Float.floor(state.player.x) == mx, Float.floor(state.player.y) == my)
-    match isPlayer
-        true -> renderMinimapPlayer(state, enemies, ox, oy, row, col)
-        false -> renderMinimapOther(state, enemies, mx, my, ox, oy, row, col)
-
-fn renderMinimapPlayer(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Draw player with direction arrow on minimap"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("yellow")?
-    Terminal.print(Types.dirArrow(state.player.angle))?
-    Terminal.setColor("green")?
-    renderMinimapCols(state, enemies, ox, oy, row, col + 1)
-
-fn renderMinimapOther(state: GameState, enemies: Vector<Enemy>, mx: Int, my: Int, ox: Int, oy: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Draw wall, floor, or enemy on minimap"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    hasEnemy = enemyAtVec(enemies, mx, my, 0)
-    match hasEnemy
-        true -> renderMinimapEnemy(state, enemies, ox, oy, row, col)
-        false -> renderMinimapTile(state, enemies, mx, my, ox, oy, row, col)
-
-fn renderMinimapEnemy(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Draw enemy marker on minimap"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("red")?
-    Terminal.print("*")?
-    Terminal.setColor("green")?
-    renderMinimapCols(state, enemies, ox, oy, row, col + 1)
-
-fn renderMinimapTile(state: GameState, enemies: Vector<Enemy>, mx: Int, my: Int, ox: Int, oy: Int, row: Int, col: Int) -> Result<Unit, String>
-    ? "Draw wall or floor on minimap"
-    ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("green")?
-    match Level.isWall(state.levelMap, mx, my)
-        true -> Terminal.print("#")?
-        false -> Terminal.print(".")?
-    renderMinimapCols(state, enemies, ox, oy, row, col + 1)
-
-fn enemyAt(enemies: List<Enemy>, mx: Int, my: Int, i: Int) -> Bool
-    ? "Check if any enemy is at map tile (mx, my)"
-    enemyAtVec(Vector.fromList(enemies), mx, my, i)
-
-verify enemyAt
-    enemyAt([], 5, 5, 0) => false
-    enemyAt([Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3)], 5, 5, 0) => true
-
-fn enemyAtVec(enemies: Vector<Enemy>, mx: Int, my: Int, i: Int) -> Bool
-    ? "Check if any enemy is at map tile (mx, my) using enemy vector"
-    match i == Vector.len(enemies)
-        true -> false
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> match Bool.and(Float.floor(e.x) == mx, Float.floor(e.y) == my)
-                true -> true
-                false -> enemyAtVec(enemies, mx, my, i + 1)
-            Option.None -> false
-
-verify enemyAtVec
-    enemyAtVec(Vector.fromList([]), 5, 5, 0) => false
-    enemyAtVec(Vector.fromList([Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3)]), 5, 5, 0) => true
+    Terminal.flush()

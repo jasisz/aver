@@ -4069,7 +4069,7 @@ const GAME_SOURCES = {
     tetris:   ["examples/games/tetris/pieces.av", "examples/games/tetris/board.av", "examples/games/tetris/logic.av", "examples/games/tetris/main.av"],
     checkers: ["examples/games/checkers/board.av", "examples/games/checkers/rules.av", "examples/games/checkers/ai.av", "examples/games/checkers/render.av", "examples/games/checkers/main.av"],
     rogue:    ["examples/games/rogue/types.av", "examples/games/rogue/map.av", "examples/games/rogue/fov.av", "examples/games/rogue/combat.av", "examples/games/rogue/pathfinding.av", "examples/games/rogue/render.av", "examples/games/rogue/main.av"],
-    doom:     ["examples/games/doom/types.av", "examples/games/doom/math.av", "examples/games/doom/rng.av", "examples/games/doom/level.av", "examples/games/doom/enemy.av", "examples/games/doom/render.av", "examples/games/doom/main.av"],
+    doom:     ["examples/games/doom/types.av", "examples/games/doom/math.av", "examples/games/doom/rng.av", "examples/games/doom/tiles.av", "examples/games/doom/level.av", "examples/games/doom/ray.av", "examples/games/doom/enemy.av", "examples/games/doom/texture.av", "examples/games/doom/view.av", "examples/games/doom/render.av", "examples/games/doom/main.av"],
     eggcatch: ["examples/games/eggcatch/core.av", "examples/games/eggcatch/main.av"],
 };
 
@@ -4201,7 +4201,7 @@ const GAME_TOUCH = {
             { key: "left", text: "←" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Spc" }, { key: "esc", text: "Esc" },
+            { key: " ", text: "Spc" }, { key: "r", text: "R" }, { key: "esc", text: "Esc" },
         ]},
     ],
     // wumpus: console game, no touch controls

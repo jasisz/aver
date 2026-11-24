@@ -1,356 +1,389 @@
 module Enemy
     intent =
-        "Enemy AI movement and combat for Braille Doom."
-        "Imp chases, Demon guards, Ghost teleports."
-    depends [Types, Rng, Level, Math]
+        "Enemy AI and combat for Braille Doom."
+        "An enemy wakes when it sees the player, hunts the spot where it last saw them,"
+        "and strikes at arm's length. The imp is quick, the demon slow and heavy, the ghost blinks about."
+    depends [Types, Rng, Tiles, Ray, Math]
     effects []
 
-// ─── AI movement ───────────────────────────────────────────────────────────
+decision EnemiesActOnWhatTheySee
+    date = "2026-11-24"
+    author = "Claude"
+    reason =
+        "Enemies used to walk at the player whenever the straight-line distance was short,"
+        "so they knew where the player was through any wall and then pushed against that wall."
+        "An enemy now needs line of sight to notice the player and remembers the spot it saw them at."
+        "Walking to that spot takes it to the corner the player went around, where it usually sees them again,"
+        "which gives pursuit around corners without a path search."
+        "After a few turns without sight the trail goes cold and the enemy stops."
+    chosen = "SightAndLastSeenSpot"
+    rejected = ["DistanceOnly", "ShortestPathSearch"]
+    impacts = [sees, think, act, notice]
 
-fn moveToward(enemy: Enemy, tx: Float, ty: Float, speed: Float, levelMap: List<String>) -> Enemy
-    ? "Move enemy one step toward target, respecting walls"
-    dx = tx - enemy.x
-    dy = ty - enemy.y
-    d = Math.dist(enemy.x, enemy.y, tx, ty)
-    match d < 0.3
-        true -> enemy
-        false -> tryMoveEnemy(enemy, levelMap, dx / d * speed, dy / d * speed)
+fn bodyRadius() -> Float
+    ? "Half-width of anything that walks: nothing gets closer to a wall than this"
+    0.25
 
-verify moveToward
-    moveToward(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 1.1, 1.1, 0.12, Level.buildMap(4, "....", [])) => Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)
+verify bodyRadius
+    bodyRadius() => 0.25
 
-fn tryMoveEnemy(enemy: Enemy, levelMap: List<String>, dx: Float, dy: Float) -> Enemy
-    ? "Try moving enemy with wall collision"
-    nx = enemy.x + dx
-    ny = enemy.y + dy
-    canX = Bool.not(Level.isWall(levelMap, Float.floor(nx), Float.floor(enemy.y)))
-    canY = Bool.not(Level.isWall(levelMap, Float.floor(enemy.x), Float.floor(ny)))
-    slideMoveEnemy(enemy, nx, ny, canX, canY)
+fn memory() -> Int
+    ? "Turns an enemy keeps heading for the spot where it last saw the player"
+    14
 
-verify tryMoveEnemy
-    tryMoveEnemy(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Level.buildMap(4, "....", []), 1.0, 0.0).x => 2.0
+verify memory
+    memory() => 14
 
-fn slideMoveEnemy(enemy: Enemy, nx: Float, ny: Float, canX: Bool, canY: Bool) -> Enemy
-    ? "Slide along walls"
-    match canX
-        true -> match canY
-            true -> Enemy.update(enemy, x = nx, y = ny)
-            false -> Enemy.update(enemy, x = nx)
-        false -> match canY
-            true -> Enemy.update(enemy, y = ny)
-            false -> enemy
+fn reach() -> Float
+    ? "Distance at which an enemy can strike"
+    0.8
 
-verify slideMoveEnemy
-    slideMoveEnemy(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 2.0, 3.0, false, true).y => 3.0
-    slideMoveEnemy(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 2.0, 3.0, true, true).x => 2.0
-    slideMoveEnemy(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 2.0, 3.0, true, false).x => 2.0
+verify reach
+    reach() => 0.8
 
-fn ghostTeleport(enemy: Enemy, seed: Int, levelMap: List<String>) -> Enemy
-    ? "Teleport ghost to a random nearby floor tile"
-    s1 = Rng.nextSeed(seed)
-    s2 = Rng.nextSeed(s1)
-    dx = Float.fromInt(Rng.seedToRange(s1, 0 - 4, 4))
-    dy = Float.fromInt(Rng.seedToRange(s2, 0 - 4, 4))
-    nx = enemy.x + dx
-    ny = enemy.y + dy
-    match Level.isWall(levelMap, Float.floor(nx), Float.floor(ny))
-        true -> enemy
-        false -> Enemy.update(enemy, x = nx, y = ny)
+fn attackDelay() -> Int
+    ? "Turns between two strikes of one enemy"
+    3
 
-verify ghostTeleport
-    ghostTeleport(Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4), 42, Level.buildMap(4, "####", [])) => Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4)
+verify attackDelay
+    attackDelay() => 3
 
-fn stepEnemy(enemy: Enemy, px: Float, py: Float, levelMap: List<String>, seed: Int, turn: Int) -> Enemy
-    ? "One AI tick for an enemy"
-    d = Math.dist(enemy.x, enemy.y, px, py)
-    match enemy.kind
-        EnemyKind.Imp -> stepImp(enemy, px, py, d, levelMap)
-        EnemyKind.Demon -> stepDemon(enemy, px, py, d, levelMap)
-        EnemyKind.Ghost -> stepGhost(enemy, px, py, d, levelMap, seed, turn)
+fn shotDamage() -> Int
+    ? "HP one shot takes off"
+    5
 
-verify stepEnemy
-    stepEnemy(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 20.0, 20.0, Level.buildMap(4, "....", []), 42, 1) => Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)
+verify shotDamage
+    shotDamage() => 5
 
-fn stepImp(enemy: Enemy, px: Float, py: Float, d: Float, levelMap: List<String>) -> Enemy
-    ? "Imp always chases player when in range"
-    match d < 8.0
-        true -> moveToward(enemy, px, py, 0.12, levelMap)
-        false -> enemy
+fn sightRange(kind: EnemyKind) -> Float
+    ? "How far an enemy kind sees"
+    match kind
+        EnemyKind.Imp -> 10.0
+        EnemyKind.Demon -> 7.0
+        EnemyKind.Ghost -> 9.0
 
-verify stepImp
-    stepImp(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 20.0, 20.0, 10.0, Level.buildMap(4, "....", [])) => Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)
+verify sightRange
+    sightRange(EnemyKind.Imp) => 10.0
+    sightRange(EnemyKind.Demon) => 7.0
+    sightRange(EnemyKind.Ghost) => 9.0
 
-fn stepDemon(enemy: Enemy, px: Float, py: Float, d: Float, levelMap: List<String>) -> Enemy
-    ? "Demon only moves when player is close"
-    match d < 5.0
-        true -> moveToward(enemy, px, py, 0.06, levelMap)
-        false -> enemy
+fn speed(kind: EnemyKind) -> Float
+    ? "Distance an enemy kind covers per turn; the player covers 0.15"
+    match kind
+        EnemyKind.Imp -> 0.12
+        EnemyKind.Demon -> 0.07
+        EnemyKind.Ghost -> 0.09
 
-verify stepDemon
-    stepDemon(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 20.0, 20.0, 10.0, Level.buildMap(4, "....", [])) => Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8)
-
-fn stepGhost(enemy: Enemy, px: Float, py: Float, d: Float, levelMap: List<String>, seed: Int, turn: Int) -> Enemy
-    ? "Ghost teleports every 4 turns, otherwise drifts toward player"
-    isTeleportTurn = Int.mod(turn, 4) == 0
-    match isTeleportTurn
-        true -> ghostTeleport(enemy, seed, levelMap)
-        false -> match d < 6.0
-            true -> moveToward(enemy, px, py, 0.08, levelMap)
-            false -> enemy
-
-verify stepGhost
-    stepGhost(Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4), 20.0, 20.0, 10.0, Level.buildMap(4, "....", []), 42, 1) => Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4)
-
-fn updateEnemies(enemies: List<Enemy>, px: Float, py: Float, levelMap: List<String>, seed: Int, turn: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
-    ? "Update all enemies one tick"
-    updateEnemiesVec(Vector.fromList(enemies), px, py, levelMap, seed, turn, i, acc)
-
-verify updateEnemies
-    updateEnemies([], 1.0, 1.0, Level.buildMap(4, "....", []), 42, 0, 0, []) => []
-
-// ─── Combat ────────────────────────────────────────────────────────────────
-
-fn updateEnemiesVec(enemies: Vector<Enemy>, px: Float, py: Float, levelMap: List<String>, seed: Int, turn: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
-    ? "Update all enemies one tick using indexed vector access"
-    match i == Vector.len(enemies)
-        true -> acc
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> updateEnemiesVec(enemies, px, py, levelMap, Rng.nextSeed(seed), turn, i + 1, List.concat(acc, [stepEnemy(e, px, py, levelMap, seed, turn)]))
-            Option.None -> acc
-
-verify updateEnemiesVec
-    updateEnemiesVec(Vector.fromList([]), 1.0, 1.0, Level.buildMap(4, "....", []), 42, 0, 0, []) => []
-
-fn enemyTouchingPlayer(enemy: Enemy, px: Float, py: Float) -> Bool
-    ? "Is the enemy close enough to hurt the player"
-    Math.dist(enemy.x, enemy.y, px, py) < 0.5
-
-verify enemyTouchingPlayer
-    enemyTouchingPlayer(Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3), 5.0, 5.0) => true
-    enemyTouchingPlayer(Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3), 20.0, 20.0) => false
+verify speed
+    speed(EnemyKind.Imp) => 0.12
+    speed(EnemyKind.Demon) => 0.07
+    speed(EnemyKind.Ghost) => 0.09
 
 fn enemyDamage(kind: EnemyKind) -> Int
-    ? "Damage per hit by enemy kind"
+    ? "Damage per strike by enemy kind"
     match kind
-        EnemyKind.Imp -> 1
-        EnemyKind.Demon -> 3
-        EnemyKind.Ghost -> 2
+        EnemyKind.Imp -> 3
+        EnemyKind.Demon -> 9
+        EnemyKind.Ghost -> 6
 
 verify enemyDamage
-    enemyDamage(EnemyKind.Imp) => 1
-    enemyDamage(EnemyKind.Demon) => 3
-    enemyDamage(EnemyKind.Ghost) => 2
+    enemyDamage(EnemyKind.Imp) => 3
+    enemyDamage(EnemyKind.Demon) => 9
+    enemyDamage(EnemyKind.Ghost) => 6
 
-fn applyEnemyDamage(enemies: List<Enemy>, player: Player, i: Int) -> Player
-    ? "Apply damage from all touching enemies to player"
-    applyEnemyDamageVec(Vector.fromList(enemies), player, i)
+fn hitRadius(kind: EnemyKind) -> Float
+    ? "How far from the centre of an enemy a shot still hits, matching the width it is drawn at"
+    match kind
+        EnemyKind.Imp -> 0.3
+        EnemyKind.Demon -> 0.45
+        EnemyKind.Ghost -> 0.35
 
-verify applyEnemyDamage
-    applyEnemyDamage([], Types.mkPlayer(1.0, 1.0), 0).hp => 20
+verify hitRadius
+    hitRadius(EnemyKind.Imp) => 0.3
+    hitRadius(EnemyKind.Demon) => 0.45
+    hitRadius(EnemyKind.Ghost) => 0.35
 
-fn applyEnemyDamageVec(enemies: Vector<Enemy>, player: Player, i: Int) -> Player
-    ? "Apply damage from all touching enemies using indexed vector access"
-    match i == Vector.len(enemies)
-        true -> player
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> applyDamageOneVec(enemies, player, i, e)
-            Option.None -> player
+record Struck
+    enemy: Enemy
+    damage: Int
 
-verify applyEnemyDamageVec
-    applyEnemyDamageVec(Vector.fromList([]), Types.mkPlayer(1.0, 1.0), 0).hp => 20
+record Round
+    enemies: List<Enemy>
+    damage: Int
 
-fn applyDamageOne(enemies: List<Enemy>, player: Player, i: Int, e: Enemy) -> Player
-    ? "Apply damage from one enemy if touching"
-    applyDamageOneVec(Vector.fromList(enemies), player, i, e)
+record Shot
+    enemies: List<Enemy>
+    message: String
 
-verify applyDamageOne
-    applyDamageOne([], Types.mkPlayer(1.0, 1.0), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)).hp => 19
+// ─── Awareness ─────────────────────────────────────────────────────────────
+
+fn sees(enemy: Enemy, px: Float, py: Float, grid: Grid) -> Bool
+    ? "Is the player within sight range with no wall in between"
+    match Math.dist(enemy.x, enemy.y, px, py) < sightRange(enemy.kind)
+        true -> Ray.lineOfSight(grid, enemy.x, enemy.y, px, py)
+        false -> false
+
+verify sees
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....", "####", "...."])) => true
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])) => false
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Demon, 8), 8.5, 0.5, Tiles.gridOf(["..........."])) => false
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 8.5, 0.5, Tiles.gridOf(["..........."])) => true
+
+fn notice(enemy: Enemy, px: Float, py: Float) -> Enemy
+    ? "The enemy knows the player is at (px, py)"
+    Enemy.update(enemy, alert = memory(), seenX = px, seenY = py)
+
+verify notice
+    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 4.0, 5.0).alert => memory()
+    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 4.0, 5.0).seenX => 4.0
+    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 4.0, 5.0).seenY => 5.0
+
+fn think(enemy: Enemy, px: Float, py: Float, grid: Grid) -> Enemy
+    ? "Refresh what the enemy knows: a fresh sighting, or a trail one turn colder"
+    match sees(enemy, px, py, grid)
+        true -> notice(enemy, px, py)
+        false -> Enemy.update(enemy, alert = Int.max(0, enemy.alert - 1))
+
+verify think
+    think(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....", "####", "...."])).alert => memory()
+    think(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).alert => 0
+    think(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).alert => memory() - 1
+    think(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).seenX => 3.5
+
+// ─── Movement ──────────────────────────────────────────────────────────────
+
+fn slide(enemy: Enemy, grid: Grid, dx: Float, dy: Float) -> Enemy
+    ? "Move by (dx, dy) one axis at a time, keeping the axis a wall does not block"
+    wantX = enemy.x + dx
+    wantY = enemy.y + dy
+    nx = match Tiles.blocked(grid, wantX, enemy.y, bodyRadius())
+        true -> enemy.x
+        false -> wantX
+    ny = match Tiles.blocked(grid, nx, wantY, bodyRadius())
+        true -> enemy.y
+        false -> wantY
+    Enemy.update(enemy, x = nx, y = ny)
+
+verify slide
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "....", "...."]), 0.5, 0.0).x => 2.0
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "..#.", "...."]), 0.5, 0.25).x => 1.5
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "..#.", "...."]), 0.5, 0.25).y => 1.75
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "....", "..#."]), 0.5, 0.5).y => 1.5
+
+fn moveToward(enemy: Enemy, tx: Float, ty: Float, grid: Grid) -> Enemy
+    ? "Move one step toward a target, never past it"
+    d = Math.dist(enemy.x, enemy.y, tx, ty)
+    step = Float.min(speed(enemy.kind), d)
+    match d < 0.01
+        true -> enemy
+        false -> slide(enemy, grid, (tx - enemy.x) / d * step, (ty - enemy.y) / d * step)
+
+verify moveToward
+    moveToward(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), 1.5, 1.5, Tiles.gridOf(["....", "....", "...."])) => Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3)
+    moveToward(Types.mkEnemy(0.5, 1.5, EnemyKind.Imp, 3), 3.5, 1.5, Tiles.gridOf(["....", "....", "...."])).x => 0.62
+    moveToward(Types.mkEnemy(0.5, 1.5, EnemyKind.Imp, 3), 0.55, 1.5, Tiles.gridOf(["....", "....", "...."])).x => 0.55
+
+fn blinkSpot(enemy: Enemy, seed: Int) -> Tuple<Float, Float>
+    ? "Centre of a random tile up to 3 tiles away"
+    s1 = Rng.nextSeed(seed)
+    s2 = Rng.nextSeed(s1)
+    (Float.fromInt(Float.floor(enemy.x) + Rng.seedToRange(s1, 0 - 3, 3)) + 0.5, Float.fromInt(Float.floor(enemy.y) + Rng.seedToRange(s2, 0 - 3, 3)) + 0.5)
+
+verify blinkSpot
+    blinkSpot(Types.mkEnemy(5.2, 5.7, EnemyKind.Ghost, 4), 42) => (6.5, 2.5)
+
+fn blink(enemy: Enemy, seed: Int, px: Float, py: Float, grid: Grid) -> Enemy
+    ? "Ghost jump to a random nearby tile; it stays put when the tile is wall or within the player's reach"
+    match blinkSpot(enemy, seed)
+        (nx, ny) -> match Bool.or(Tiles.blocked(grid, nx, ny, bodyRadius()), Math.dist(nx, ny, px, py) < 1.5)
+            true -> enemy
+            false -> Enemy.update(enemy, x = nx, y = ny)
+
+verify blink
+    blink(Types.mkEnemy(1.5, 1.5, EnemyKind.Ghost, 4), 42, 9.0, 9.0, Tiles.gridOf(["####", "#.##", "####"])) => Types.mkEnemy(1.5, 1.5, EnemyKind.Ghost, 4)
+
+verify blink law neverIntoAWallOrOntoThePlayer
+    given seed: Int = 0..60
+    Bool.or(Tiles.blocked(Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."]), blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).x, blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).y, bodyRadius()), Math.dist(blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).x, blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).y, 0.5, 0.5) < 1.5) => false
+
+fn blinks(enemy: Enemy, turn: Int) -> Bool
+    ? "Does this enemy jump instead of walking this turn: a ghost, every sixth turn"
+    match enemy.kind
+        EnemyKind.Ghost -> Int.mod(turn, 6) == 0
+        _ -> false
+
+verify blinks
+    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4), 12) => true
+    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4), 13) => false
+    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 12) => false
+
+fn act(enemy: Enemy, px: Float, py: Float, grid: Grid, seed: Int, turn: Int) -> Enemy
+    ? "Move an enemy that is on the player's trail; an idle one, or one already in reach, stays"
+    match Bool.or(enemy.alert == 0, Math.dist(enemy.x, enemy.y, px, py) < reach() - 0.1)
+        true -> enemy
+        false -> match blinks(enemy, turn)
+            true -> blink(enemy, seed, px, py, grid)
+            false -> moveToward(enemy, enemy.seenX, enemy.seenY, grid)
+
+verify act
+    act(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 0.5
+    act(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 0.62
+    act(notice(Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 3.0
+
+// ─── Striking the player ───────────────────────────────────────────────────
+
+fn strike(enemy: Enemy, px: Float, py: Float) -> Struck
+    ? "The enemy and the damage it deals this turn: a strike in reach, then a pause before the next"
+    match enemy.cooldown > 0
+        true -> Struck(enemy = Enemy.update(enemy, cooldown = enemy.cooldown - 1), damage = 0)
+        false -> match Bool.and(enemy.alert > 0, Math.dist(enemy.x, enemy.y, px, py) < reach())
+            true -> Struck(enemy = Enemy.update(enemy, cooldown = attackDelay()), damage = enemyDamage(enemy.kind))
+            false -> Struck(enemy = enemy, damage = 0)
+
+verify strike
+    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), 1.5, 1.0).damage => 9
+    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), 1.5, 1.0).enemy.cooldown => attackDelay()
+    strike(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0).damage => 0
+    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 5.0, 1.0), 5.0, 1.0).damage => 0
+    strike(Enemy.update(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), cooldown = 2), 1.5, 1.0).damage => 0
+    strike(Enemy.update(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), cooldown = 2), 1.5, 1.0).enemy.cooldown => 1
+
+fn tick(enemy: Enemy, px: Float, py: Float, grid: Grid, seed: Int, turn: Int) -> Struck
+    ? "One turn of one enemy: look, move, strike"
+    strike(act(think(enemy, px, py, grid), px, py, grid, seed, turn), px, py)
+
+verify tick
+    tick(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).enemy.x => 0.62
+    tick(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."]), 42, 1) => Struck(enemy = Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), damage = 0)
+    tick(Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).damage => 3
+
+fn tickAll(enemies: List<Enemy>, px: Float, py: Float, grid: Grid, seed: Int, turn: Int, acc: List<Enemy>, damage: Int) -> Round
+    ? "One turn of every enemy: the enemies afterwards and the total damage to the player"
+    match enemies
+        [] -> Round(enemies = List.reverse(acc), damage = damage)
+        [e, ..rest] -> tickRest(rest, px, py, grid, seed, turn, acc, damage, tick(e, px, py, grid, seed, turn))
+
+verify tickAll
+    tickAll([], 1.0, 1.0, Tiles.gridOf(["....."]), 42, 0, [], 0) => Round(enemies = [], damage = 0)
+    tickAll([Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.0, 0.5, EnemyKind.Demon, 8)], 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1, [], 0).damage => 12
+
+fn tickRest(rest: List<Enemy>, px: Float, py: Float, grid: Grid, seed: Int, turn: Int, acc: List<Enemy>, damage: Int, struck: Struck) -> Round
+    ? "Record one enemy's turn and go on with the rest, each on its own random numbers"
+    tickAll(rest, px, py, grid, Rng.nextSeed(seed), turn, List.prepend(struck.enemy, acc), damage + struck.damage)
+
+verify tickRest
+    tickRest([], 1.0, 1.0, Tiles.gridOf(["....."]), 42, 0, [], 2, Struck(enemy = Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), damage = 3)) => Round(enemies = [Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3)], damage = 5)
 
 // ─── Shooting ──────────────────────────────────────────────────────────────
 
-fn applyDamageOneVec(enemies: Vector<Enemy>, player: Player, i: Int, e: Enemy) -> Player
-    ? "Apply damage from one enemy if touching using shared enemy vector"
-    next = i + 1
-    match enemyTouchingPlayer(e, player.x, player.y)
-        true -> applyEnemyDamageVec(enemies, Player.update(player, hp = player.hp - enemyDamage(e.kind)), next)
-        false -> applyEnemyDamageVec(enemies, player, next)
+fn along(e: Enemy, px: Float, py: Float, dx: Float, dy: Float) -> Float
+    ? "How far along the shot the enemy is; negative when it is behind the player"
+    (e.x - px) * dx + (e.y - py) * dy
 
-verify applyDamageOneVec
-    applyDamageOneVec(Vector.fromList([]), Types.mkPlayer(1.0, 1.0), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)).hp => 19
+verify along
+    along(Types.mkEnemy(4.0, 2.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 3.0
+    along(Types.mkEnemy(0.0, 2.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 0.0 - 1.0
 
-fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
-    ? "Cast a ray from player, hit first enemy in path. Returns updated enemies and message."
-    dx = Float.cos(angle)
-    dy = Float.sin(angle)
-    shootMarch(enemies, px, py, dx, dy, 0.0, levelMap)
+fn aside(e: Enemy, px: Float, py: Float, dx: Float, dy: Float) -> Float
+    ? "How far the enemy's centre is from the line of the shot"
+    Float.abs((e.x - px) * dy - (e.y - py) * dx)
 
-verify shootRay
-    shootRay([], 1.0, 1.0, 0.0, Level.buildMap(4, "####", [])) => ([], "Shot hit wall")
+verify aside
+    aside(Types.mkEnemy(4.0, 2.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 1.0
+    aside(Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 0.0
 
-fn shootMarch(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
-    ? "March along shot ray checking for enemy hits"
-    match dist > 12.0
-        true -> (enemies, "Shot missed!")
-        false -> shootCheck(enemies, px, py, dx, dy, dist, levelMap)
+fn inSights(e: Enemy, px: Float, py: Float, dx: Float, dy: Float, wallDist: Float) -> Bool
+    ? "Would a shot along the unit direction (dx, dy) hit this enemy before the wall"
+    a = along(e, px, py, dx, dy)
+    Bool.and(Bool.and(a > 0.0, a < wallDist), aside(e, px, py, dx, dy) < hitRadius(e.kind))
 
-verify shootMarch
-    shootMarch([], 1.0, 1.0, 1.0, 0.0, 12.1, Level.buildMap(4, "....", [])) => ([], "Shot missed!")
+verify inSights
+    inSights(Types.mkEnemy(4.0, 1.2, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => true
+    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
+    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Demon, 8), 1.0, 1.0, 1.0, 0.0, 6.0) => true
+    inSights(Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 2.5) => false
+    inSights(Types.mkEnemy(0.0, 1.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
 
-fn shootCheck(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
-    ? "Compute ray position and check for wall or enemy hit"
-    cx = px + dx * dist
-    cy = py + dy * dist
-    mx = Float.floor(cx)
-    my = Float.floor(cy)
-    match Level.isWall(levelMap, mx, my)
-        true -> (enemies, "Shot hit wall")
-        false -> shootCheckEnemies(cx, cy, enemies, px, py, dx, dy, dist, levelMap)
+fn nearer(a: Tuple<Int, Enemy>, b: Tuple<Int, Enemy>, px: Float, py: Float, dx: Float, dy: Float) -> Tuple<Int, Enemy>
+    ? "Of two indexed enemies, the one nearer along the shot; the first on a tie"
+    match a
+        (_, ea) -> match b
+            (_, eb) -> match along(eb, px, py, dx, dy) < along(ea, px, py, dx, dy)
+                true -> b
+                false -> a
 
-verify shootCheck
-    shootCheck([], 1.0, 1.0, 1.0, 0.0, 0.0, Level.buildMap(4, "####", [])) => ([], "Shot hit wall")
+verify nearer
+    nearer((0, Types.mkEnemy(3.0, 1.0, EnemyKind.Imp, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3)), 1.0, 1.0, 1.0, 0.0) => (0, Types.mkEnemy(3.0, 1.0, EnemyKind.Imp, 3))
+    nearer((0, Types.mkEnemy(5.0, 1.0, EnemyKind.Imp, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3)), 1.0, 1.0, 1.0, 0.0) => (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3))
+    nearer((0, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Demon, 8)), 1.0, 1.0, 1.0, 0.0) => (0, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3))
 
-fn shootCheckEnemies(cx: Float, cy: Float, enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
-    ? "Check if any enemy is at the ray position"
-    match findEnemyAt(enemies, cx, cy, 0)
-        Option.Some(idx) -> applyShot(enemies, idx)
-        Option.None -> shootMarch(enemies, px, py, dx, dy, dist + 0.2, levelMap)
+fn target(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, wallDist: Float, i: Int, best: Option<Tuple<Int, Enemy>>) -> Option<Tuple<Int, Enemy>>
+    ? "Index and value of the first enemy a shot would hit, if any"
+    match enemies
+        [] -> best
+        [e, ..rest] -> match inSights(e, px, py, dx, dy, wallDist)
+            true -> target(rest, px, py, dx, dy, wallDist, i + 1, Option.Some(nearer(Option.withDefault(best, (i, e)), (i, e), px, py, dx, dy)))
+            false -> target(rest, px, py, dx, dy, wallDist, i + 1, best)
 
-verify shootCheckEnemies
-    shootCheckEnemies(1.0, 1.0, [], 1.0, 1.0, 1.0, 0.0, 12.2, Level.buildMap(4, "....", [])) => ([], "Shot missed!")
+verify target
+    target([], 1.0, 1.0, 1.0, 0.0, 6.0, 0, Option.None) => Option.None
+    target([Types.mkEnemy(5.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(1.0, 4.0, EnemyKind.Imp, 3), Types.mkEnemy(3.0, 1.0, EnemyKind.Ghost, 4)], 1.0, 1.0, 1.0, 0.0, 6.0, 0, Option.None) => Option.Some((2, Types.mkEnemy(3.0, 1.0, EnemyKind.Ghost, 4)))
 
-fn findEnemyAt(enemies: List<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int>
-    ? "Find enemy near position, return index"
-    findEnemyAtVec(Vector.fromList(enemies), cx, cy, i)
+fn aimedAt(enemies: List<Enemy>, player: Player, grid: Grid) -> Option<Tuple<Int, Enemy>>
+    ? "The enemy under the crosshair: the one a shot fired now would hit"
+    dx = Float.cos(player.angle)
+    dy = Float.sin(player.angle)
+    target(enemies, player.x, player.y, dx, dy, Ray.cast(grid, player.x, player.y, dx, dy).dist, 0, Option.None)
 
-verify findEnemyAt
-    findEnemyAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 1.0, 1.0, 0) => Option.Some(0)
-    findEnemyAt([], 1.0, 1.0, 0) => Option.None
+verify aimedAt
+    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Option.Some((0, Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)))
+    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."])) => Option.None
+    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Player.update(Types.mkPlayer(0.5, 0.5), angle = Float.pi()), Tiles.gridOf(["....."])) => Option.None
 
-fn findEnemyAtVec(enemies: Vector<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int>
-    ? "Find enemy near position using indexed vector access"
-    match i == Vector.len(enemies)
-        true -> Option.None
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> match Math.dist(e.x, e.y, cx, cy) < 0.6
-                true -> Option.Some(i)
-                false -> findEnemyAtVec(enemies, cx, cy, i + 1)
-            Option.None -> Option.None
+fn wound(e: Enemy, px: Float, py: Float) -> Option<Enemy>
+    ? "An enemy after a shot from (px, py): gone, or hurt and aware of the shooter"
+    match e.hp > shotDamage()
+        true -> Option.Some(notice(Enemy.update(e, hp = e.hp - shotDamage()), px, py))
+        false -> Option.None
 
-verify findEnemyAtVec
-    findEnemyAtVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 1.0, 1.0, 0) => Option.Some(0)
-    findEnemyAtVec(Vector.fromList([]), 1.0, 1.0, 0) => Option.None
+verify wound
+    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 2.0, 2.0) => Option.None
+    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 2.0, 2.0) => Option.Some(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 3), 2.0, 2.0))
+    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 5), 2.0, 2.0) => Option.None
 
-fn applyShot(enemies: List<Enemy>, idx: Int) -> Tuple<List<Enemy>, String>
-    ? "Apply 5 damage to enemy at index, remove if dead"
-    applyShotVec(Vector.fromList(enemies), idx)
+fn woundAt(enemies: List<Enemy>, idx: Int, px: Float, py: Float, acc: List<Enemy>) -> List<Enemy>
+    ? "The enemies after a shot hits the one at idx"
+    match enemies
+        [] -> List.reverse(acc)
+        [e, ..rest] -> match idx == 0
+            false -> woundAt(rest, idx - 1, px, py, List.prepend(e, acc))
+            true -> match wound(e, px, py)
+                Option.Some(hurt) -> List.concat(List.reverse(acc), List.prepend(hurt, rest))
+                Option.None -> List.concat(List.reverse(acc), rest)
 
-verify applyShot
-    applyShot([], 0) => ([], "Shot missed!")
+verify woundAt
+    woundAt([], 0, 2.0, 2.0, []) => []
+    woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 2.0, 2.0, []) => [Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)]
+    List.len(woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 1, 2.0, 2.0, [])) => 2
+    woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 3, 2.0, 2.0, []) => [Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]
 
-fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> Tuple<List<Enemy>, String>
-    ? "Apply 5 damage to enemy at index using indexed vector access"
-    match Vector.get(enemies, idx)
-        Option.Some(e) -> applyDamageToEnemyVec(enemies, idx, e)
-        Option.None -> (List.fromVector(enemies), "Shot missed!")
+fn shotMessage(e: Enemy) -> String
+    ? "What the player reads after hitting this enemy"
+    match e.hp > shotDamage()
+        true -> "You hit the {Types.enemyName(e.kind)}: {e.hp - shotDamage()} HP left."
+        false -> "The {Types.enemyName(e.kind)} falls."
 
-verify applyShotVec
-    applyShotVec(Vector.fromList([]), 0) => ([], "Shot missed!")
+verify shotMessage
+    shotMessage(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => "The imp falls."
+    shotMessage(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8)) => "You hit the demon: 3 HP left."
 
-fn applyDamageToEnemy(enemies: List<Enemy>, idx: Int, e: Enemy) -> Tuple<List<Enemy>, String>
-    ? "Reduce enemy HP, remove if dead"
-    applyDamageToEnemyVec(Vector.fromList(enemies), idx, e)
+fn shoot(enemies: List<Enemy>, player: Player, grid: Grid) -> Shot
+    ? "Fire along the player's facing: the enemies afterwards and a message"
+    match aimedAt(enemies, player, grid)
+        Option.Some((idx, e)) -> Shot(enemies = woundAt(enemies, idx, player.x, player.y, []), message = shotMessage(e))
+        Option.None -> Shot(enemies = enemies, message = "Your shot hits the wall.")
 
-verify applyDamageToEnemy
-    applyDamageToEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")
-
-fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> Tuple<List<Enemy>, String>
-    ? "Reduce enemy HP, remove if dead using shared enemy vector"
-    newHp = e.hp - 5
-    match newHp < 1
-        true -> (removeEnemyVec(enemies, idx, 0, []), "Killed {Types.enemyGlyph(e.kind)}!")
-        false -> (replaceEnemyVec(enemies, idx, Enemy.update(e, hp = newHp), 0, []), "Hit {Types.enemyGlyph(e.kind)}! ({String.fromInt(newHp)} HP)")
-
-verify applyDamageToEnemyVec
-    applyDamageToEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")
-
-fn removeEnemy(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
-    ? "Remove enemy at index from list"
-    removeEnemyVec(Vector.fromList(enemies), idx, i, acc)
-
-verify removeEnemy
-    List.len(removeEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 0, [])) => 1
-
-fn removeEnemyVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
-    ? "Remove enemy at index using indexed vector access"
-    match i == Vector.len(enemies)
-        true -> acc
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> removeEnemyStepVec(enemies, idx, i, acc, e)
-            Option.None -> acc
-
-verify removeEnemyVec
-    List.len(removeEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)]), 0, 0, [])) => 1
-
-fn removeEnemyStep(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
-    ? "Skip or keep enemy at index"
-    removeEnemyStepVec(Vector.fromList(enemies), idx, i, acc, e)
-
-verify removeEnemyStep
-    List.len(removeEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))) => 0
-
-fn removeEnemyStepVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
-    ? "Skip or keep enemy at index using shared enemy vector"
-    next = i + 1
-    match i == idx
-        true -> removeEnemyVec(enemies, idx, next, acc)
-        false -> removeEnemyVec(enemies, idx, next, List.concat(acc, [e]))
-
-verify removeEnemyStepVec
-    List.len(removeEnemyStepVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))) => 0
-
-fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
-    ? "Replace enemy at index in list"
-    replaceEnemyVec(Vector.fromList(enemies), idx, newE, i, acc)
-
-verify replaceEnemy
-    match Vector.get(Vector.fromList(replaceEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon
-
-fn replaceEnemyVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
-    ? "Replace enemy at index using indexed vector access"
-    match i == Vector.len(enemies)
-        true -> acc
-        false -> match Vector.get(enemies, i)
-            Option.Some(e) -> replaceEnemyStepVec(enemies, idx, newE, i, acc, e)
-            Option.None -> acc
-
-verify replaceEnemyVec
-    match Vector.get(Vector.fromList(replaceEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon
-
-fn replaceEnemyStep(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
-    ? "Replace or keep enemy at index"
-    replaceEnemyStepVec(Vector.fromList(enemies), idx, newE, i, acc, e)
-
-verify replaceEnemyStep
-    match Vector.get(Vector.fromList(replaceEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon
-
-fn replaceEnemyStepVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
-    ? "Replace or keep enemy at index using shared enemy vector"
-    next = i + 1
-    match i == idx
-        true -> replaceEnemyVec(enemies, idx, newE, next, List.concat(acc, [newE]))
-        false -> replaceEnemyVec(enemies, idx, newE, next, List.concat(acc, [e]))
-
-verify replaceEnemyStepVec
-    match Vector.get(Vector.fromList(replaceEnemyStepVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon
+verify shoot
+    shoot([], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Shot(enemies = [], message = "Your shot hits the wall.")
+    shoot([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Shot(enemies = [], message = "The imp falls.")
+    shoot([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."])).message => "Your shot hits the wall."
