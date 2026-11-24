@@ -2,6 +2,22 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.38.0 "Pool" (unreleased)
+
+> _Jobs keep their workers, and threads keep their classes._
+
+0.37.1 was yanked from crates.io (aver-lang 0.37.1, aver-rt 0.4.22): it wrote a node's equality class bits in two stores and read them in two loads, so with several threads writing classes on shared nodes a torn read could, rarely, make `==` answer true for unequal values. 0.38.0 fixes that and keeps the rest of 0.37.1.
+
+- **Jobs run on a worker pool.** Admitted jobs run on at most max-jobs workers that wait for the next job and end with the engine, instead of a new thread per job, so per-thread state (equality classes, allocator pages) survives between jobs and no job pays a thread start. Admission, limits, queue order, cancel, `Wait.poll` and answers are unchanged; a panic message names the thread `aver-job` instead of `aver-job-{id}`. A small job takes about 7 µs instead of 25 µs (3× fewer instructions); a Lean kernel checker written in Aver checks Init with 4 job workers in 4% fewer instructions.
+- **Job boundary refinements stay machine integers (compiled Rust).** A refinement over `Int` held as a raw `i64` kept that representation everywhere except at a capability boundary, which included every type a job kind's task or answer reaches. Job-kind boundary types now stay carriers; the codec carries the field as `Int` and refuses a value outside the refinement's bound on read, and replay now checks that bound too (before, a value that fit the field but not the refinement was accepted). Contract hashes are unchanged. On the Lean kernel checker, which declares a job kind, Init takes 18.6% fewer instructions (81.5 G → 66.4 G) at the same memory.
+- **Equality classes share one budget of further slots (compiled Rust).** Since 0.37.1 a thread has 2^16 class ids per slot; one that ran out cleared all its classes and compared settled pairs in full again (one CFSG certificate took 15.8% more instructions than on 0.37.0). A thread out of ids now first takes a further slot, from those given back or never used, under one process-wide budget (64 further slots, about 48 MB of class tables); a thread with no slot at all asks, and a thread holding further slots gives them back on its next start-over. On the Lean kernel checker, slices of the CFSG certificates take 26–86% fewer instructions at 1 worker (755.9 → 106.7 G, 2109 → 799 G, 2883 → 2125 G), Init, std and mathlib at 4 workers are unchanged, and peak memory grows by 15–55 MB.
+
+### Fixed
+
+- Compiled Rust: a node's equality class bits are read and written with its whole tag word, never in parts. In 0.37.1 two threads writing one node's bits, or a read between another thread's two stores, could piece bits from two writes; if the pieced id was one the reader had given to a freed node at the same address, the node joined a wrong class and `==` could answer true for unequal values. A stress test saw 3816 torn reads in two million on 0.37.1 and none now. Cost on the Lean kernel checker: +0.8…1.8% instructions, wall and memory unchanged.
+- A type named bare in a module that declares or imports it means that type before a standard module's type or resource of the same name. A program type `Job` in a program that loads `Work` (whose handle is `Work.Job`) no longer became ambiguous, which made the Rust backend emit an unresolved `Job`.
+- wasm-gc: a program with a job kind compiles. The capability ABI looked up a dependency `Vector` under the wrong spelling, and built structs for records the program erases to their single field or to a raw `i64` carrier, so the module failed validation. For a carrier, the host-side constructor checks only that the value fits `i64`, not the refinement's range.
+
 ## 0.37.1 — 2026-11-23
 
 ### Changed
