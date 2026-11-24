@@ -833,23 +833,36 @@ impl SymbolTable {
     /// resolved-form classification authoritative, which exposed
     /// this missing lookup. Adding it here keeps identity logic on
     /// the symbol table where the rest of identity resolution lives.
+    ///
+    /// A standard module's type and a capability's resource are visible
+    /// everywhere, but only behind what the asking module declares or
+    /// imports: a module's own `Job`, or one from a module it depends on, is
+    /// the `Job` its code means even when the program also loads `Work`
+    /// (whose handle is the resource `Work.Job`), as the type checker reads
+    /// it. Such a type answers a bare name only when no imported one does.
     pub fn type_id_by_bare_name_in(&self, name: &str, asking: Option<&str>) -> Option<TypeId> {
-        let mut found: Option<TypeId> = None;
+        // (imported or own, standard): each the unique match, or ambiguous.
+        let mut found: [Option<Option<TypeId>>; 2] = [None, None];
         for id in self.type_name_index.get(name).into_iter().flatten() {
-            let key = &self.type_entry(*id).key;
-            if !self.type_is_visible_to(key, *id, asking) {
+            let Some(standard) = self.type_visibility(&self.type_entry(*id).key, *id, asking)
+            else {
                 continue;
-            }
-            if found.is_some_and(|existing| existing != *id) {
+            };
+            let slot = &mut found[usize::from(standard)];
+            *slot = match *slot {
                 // Ambiguous bare reference among the scopes the asking
                 // module can see; the caller must qualify with a module
                 // prefix. The type checker reports this as
                 // `Ambiguous type name '<name>'`.
-                return None;
-            }
-            found = Some(*id);
+                Some(Some(existing)) if existing != *id => Some(None),
+                Some(earlier) => Some(earlier),
+                None => Some(Some(*id)),
+            };
         }
-        found
+        match found {
+            [Some(own), _] => own,
+            [None, standard] => standard.flatten(),
+        }
     }
 
     /// Can a bare type reference written in `asking` see the type `key`
@@ -885,20 +898,26 @@ impl SymbolTable {
     /// is how a type nobody imported could make a bare name ambiguous
     /// everywhere: the lookup then answered `None`, and `None` reads
     /// downstream as "not a user type" rather than as an error.
-    fn type_is_visible_to(&self, key: &TypeKey, id: TypeId, asking: Option<&str>) -> bool {
+    ///
+    /// `Some(false)` when the type is visible through the asking module's
+    /// own scope, its imports or the entry; `Some(true)` when only because a
+    /// standard module declares it or it is a capability's resource (such as
+    /// `Work.Job`), visible everywhere; `None` when not visible.
+    fn type_visibility(&self, key: &TypeKey, id: TypeId, asking: Option<&str>) -> Option<bool> {
         let Some(scope) = key.scope_str() else {
             // Entry scope. Only the entry's own code can spell these bare.
-            return self.names_entry_scope(asking);
+            return self.names_entry_scope(asking).then_some(false);
         };
         if asking == Some(scope)
-            || crate::stdlib::find(scope).is_some()
-            || self.type_entry(id).is_capability_resource
+            || self
+                .depends_of(asking)
+                .iter()
+                .any(|dep| self.dependency_re_exposes(dep, &key.name, scope))
         {
-            return true;
+            return Some(false);
         }
-        self.depends_of(asking)
-            .iter()
-            .any(|dep| self.dependency_re_exposes(dep, &key.name, scope))
+        (crate::stdlib::find(scope).is_some() || self.type_entry(id).is_capability_resource)
+            .then_some(true)
     }
 
     /// Resolve `module.alias` through that module's public type surface.
@@ -1797,6 +1816,44 @@ mod tests {
         // Qualified lookups still resolve.
         assert!(table.type_id_of(&TypeKey::in_module("A", "T")).is_some());
         assert!(table.type_id_of(&TypeKey::in_module("B", "T")).is_some());
+    }
+
+    #[test]
+    fn an_imported_type_answers_a_bare_name_before_a_standard_one() {
+        // `Work` is a standard module, visible everywhere, and declares
+        // `Job`. A program module `State` declares its own `Job`, and
+        // `User` depends on `State` only: its bare `Job` is `State.Job`, as
+        // the type checker reads it. Before, the standard `Work.Job` made
+        // the name ambiguous and the Rust backend emitted a bare `Job` that
+        // resolved to nothing in the generated crate.
+        let mod_user = module_depending_on("User", &["State"], vec![], vec![]);
+        let mod_state = module("State", vec![], vec![sum("Job", &["Light", "Heavy"], 1)]);
+        let mod_work = module("Work", vec![], vec![product("Job", 1)]);
+        let mod_other = module_depending_on("Other", &[], vec![], vec![]);
+        let table = SymbolTable::build(&[], &[mod_user, mod_state, mod_work, mod_other]);
+        table.assert_consistent();
+
+        assert_eq!(
+            table.type_id_by_bare_name_in("Job", Some("User")),
+            table.type_id_of(&TypeKey::in_module("State", "Job")),
+        );
+        // With nothing of its own of that name, a module still reaches the
+        // standard type by its bare name.
+        assert_eq!(
+            table.type_id_by_bare_name_in("Job", Some("Other")),
+            table.type_id_of(&TypeKey::in_module("Work", "Job")),
+        );
+        // Two imported types of one name stay ambiguous, standard or not.
+        let mod_both = module_depending_on("Both", &["State", "Work"], vec![], vec![]);
+        let table = SymbolTable::build(
+            &[],
+            &[
+                mod_both,
+                module("State", vec![], vec![sum("Job", &["Light", "Heavy"], 1)]),
+                module("Work", vec![], vec![product("Job", 1)]),
+            ],
+        );
+        assert_eq!(table.type_id_by_bare_name_in("Job", Some("Both")), None);
     }
 
     #[test]

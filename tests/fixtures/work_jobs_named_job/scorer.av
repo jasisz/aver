@@ -1,0 +1,16 @@
+module Scorer
+    kind = capability
+    semantics = effectful
+    depends [Work, Tasks]
+    intent = "One job kind whose task holds a program type named Job."
+    exposes [begin, take]
+
+operation begin(task: Tasks.Task) -> Result<Work.Job, String>
+    ? "Starts one scoring job."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Tasks.Report>, String>
+    ? "Collects one finished scoring job."
+    oracle = generativeOutput
+    replay = recorded

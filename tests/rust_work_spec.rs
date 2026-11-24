@@ -243,6 +243,14 @@ fn same_lines(name: &str, vm: &str, rust: &str) -> Result<(), String> {
 /// The two jobs settle independently and the wait reports whatever is ready,
 /// so which score prints first is a race the program itself allows — on
 /// either backend. The multiset of scores is the claim.
+/// A program type named `Job`, spelled bare in a module that imports it,
+/// beside the standard `Work.Job` every job kind brings in. The bare name is
+/// the program's own type, in the generated crate as on the VM.
+#[test]
+fn a_program_type_named_job_stays_its_own_beside_work_job() {
+    assert_same_lines("work_jobs_named_job");
+}
+
 #[test]
 fn work_jobs_matches_the_vm() {
     assert_same_lines("work_jobs");

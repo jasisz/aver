@@ -1,0 +1,29 @@
+module Node
+    depends [State, Tasks]
+    intent = "The pure function one scoring job runs."
+    exposes [score]
+    effects []
+
+fn score(task: Tasks.Task) -> Tasks.Report
+    ? "The text length times the weight of every job kind named."
+    Tasks.Report(score = String.len(task.text) * total(task.kinds, 0), last = firstOf(task.kinds))
+
+fn total(js: List<Job>, acc: Int) -> Int
+    ? "Sum of weights."
+    match js
+        [] -> acc
+        [j, ..rest] -> total(rest, acc + State.weightOf(j))
+
+verify total
+    total([], 0) => 0
+    total([Job.Light(1), State.Job.Heavy(1)], 0) => 11
+
+fn firstOf(js: List<State.Job>) -> Option<State.Job>
+    ? "The first job kind named."
+    match js
+        [] -> Option.None
+        [j, .._] -> Option.Some(j)
+
+verify firstOf
+    firstOf([]) => Option.None
+    firstOf([State.Job.Light(1)]) => Option.Some(State.Job.Light(1))
