@@ -4070,7 +4070,7 @@ const GAME_SOURCES = {
     checkers: ["examples/games/checkers/board.av", "examples/games/checkers/rules.av", "examples/games/checkers/ai.av", "examples/games/checkers/render.av", "examples/games/checkers/main.av"],
     rogue:    ["examples/games/rogue/types.av", "examples/games/rogue/map.av", "examples/games/rogue/fov.av", "examples/games/rogue/combat.av", "examples/games/rogue/pathfinding.av", "examples/games/rogue/render.av", "examples/games/rogue/main.av"],
     raycaster: ["examples/games/raycaster/types.av", "examples/games/raycaster/math.av", "examples/games/raycaster/rng.av", "examples/games/raycaster/tiles.av", "examples/games/raycaster/level.av", "examples/games/raycaster/ray.av", "examples/games/raycaster/enemy.av", "examples/games/raycaster/texture.av", "examples/games/raycaster/view.av", "examples/games/raycaster/shapes.av", "examples/games/raycaster/sprites.av", "examples/games/raycaster/render.av", "examples/games/raycaster/main.av"],
-    eggcatch: ["examples/games/eggcatch/core.av", "examples/games/eggcatch/main.av"],
+    eggcatch: ["examples/games/eggcatch/core.av", "examples/games/eggcatch/view.av", "examples/games/eggcatch/main.av"],
 };
 
 const PLAYGROUND_SOURCES_ROOT = "./sources/";
@@ -4139,15 +4139,15 @@ const GAME_TOUCH = {
         ]},
     ],
     eggcatch: [
-        { label: "Left", layout: "col", keys: [
-            { key: "q", text: "Q \u2196" }, { key: "a", text: "A \u2199" },
+        { label: "", layout: "col", keys: [
+            { key: "q", text: "\u2196" }, { key: "a", text: "\u2199" },
         ]},
-        { label: "Mode", keys: [
-            { key: "1", text: "A" }, { key: "2", text: "B" },
-            { key: "esc", text: "Esc" },
+        { label: "", keys: [
+            { key: "1", text: "Easy" }, { key: "2", text: "Hard" },
+            { key: "z", text: "Pause" }, { key: "esc", text: "Esc" },
         ]},
-        { label: "Right", layout: "col", keys: [
-            { key: "p", text: "P \u2197" }, { key: "l", text: "L \u2198" },
+        { label: "", layout: "col", keys: [
+            { key: "p", text: "\u2197" }, { key: "l", text: "\u2198" },
         ]},
     ],
     // Container modifier: catch pairs pinned to the screen edges.

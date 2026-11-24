@@ -1,0 +1,834 @@
+module View
+    intent =
+        "Egg Catch — how a state looks. `render` turns a GameState into a frame:"
+        "eighteen rows of 45 cells, each row a list of spans of text in one ink."
+        "The picture is that of a pocket game with a fixed display: hens, four"
+        "chutes, a robot with a basket, each in its place. Chutes and eggs are"
+        "Braille dots, so an egg has nineteen places along its chute, not five,"
+        "and its roll reads as smooth. `changedFrom` compares two"
+        "frames and names the rows that differ, so the shell repaints only what"
+        "moved. Everything here is pure: a frame is data, and the shell decides"
+        "what an ink means on a real terminal."
+    depends [Core]
+    effects []
+
+decision FrameIsData
+    date = "2026-11-24"
+    author = "szymon"
+    reason =
+        "A frame as one string cannot carry colour, and a render that paints"
+        "directly is an effect that no verify block can look at. Rows of"
+        "(ink, text) spans keep the picture a value: its size is a law, two"
+        "frames can be compared row by row, and the shell is left with nothing"
+        "to decide except which terminal call an ink maps to."
+    chosen = "RowsOfInkSpans"
+    rejected = ["OneStringPerFrame", "RenderPaintsDirectly"]
+    impacts = [render, changedFrom]
+
+decision EggsRollByBrailleDots
+    date = "2026-11-24"
+    author = "szymon"
+    reason =
+        "A terminal cell is too coarse for a rolling object: one cell per step"
+        "looks like a jump. A Braille cell holds two by four dots; a chute that"
+        "drops one dot for every dot it runs is a line of dots, and an egg of"
+        "four by five dots sits on it at any dot. Egg and chute never share a"
+        "dot, so a cell's picture is the sum of their dot values: the sprite is"
+        "a table of 24 numbers, and the right-hand chutes are the left-hand"
+        "ones mirrored by arithmetic on the same numbers."
+    chosen = "DotSumOverSpriteTable"
+    rejected = ["OneGlyphPerEgg", "GlyphTablePerSide"]
+    impacts = [eggBits, cellBits, mirror, chuteLeft, chuteRight]
+
+type Ink
+    Shell
+    Gold
+    Leaf
+    Wicker
+    Chalk
+    Alert
+
+record Span
+    ink: Ink
+    text: String
+
+record Line
+    y: Int
+    spans: List<Span>
+
+fn colour(ink: Ink) -> Option<String>
+    ? "Terminal colour name of an ink; None is the terminal's own foreground."
+    match ink
+        Ink.Shell -> Option.Some("white")
+        Ink.Gold -> Option.Some("yellow")
+        Ink.Leaf -> Option.Some("green")
+        Ink.Wicker -> Option.Some("cyan")
+        Ink.Chalk -> Option.None
+        Ink.Alert -> Option.Some("red")
+
+verify colour
+    colour(Ink.Gold) => Option.Some("yellow")
+    colour(Ink.Chalk) => Option.None
+    colour(Ink.Shell) => Option.Some("white")
+    colour(Ink.Leaf) => Option.Some("green")
+    colour(Ink.Wicker) => Option.Some("cyan")
+    colour(Ink.Alert) => Option.Some("red")
+
+fn pad(n: Int) -> String
+    ? "A run of `n` spaces, for n from 0 to the frame's width."
+    String.slice("                                             ", 0, n)
+
+verify pad
+    pad(0) => ""
+    pad(3) => "   "
+    String.len(pad(45)) => 45
+
+fn fit(s: String, width: Int) -> String
+    ? "A string padded with spaces on the right, or cut, to exactly `width`"
+      "characters."
+    String.slice(s + pad(width), 0, width)
+
+verify fit
+    fit("ab", 4) => "ab  "
+    fit("abcdef", 4) => "abcd"
+
+verify fit law exactWidth
+    given s: String = ["", "ab", "SCORE", "a much longer string than the frame is wide"]
+    given width: Int = [0, 4, 12, 35]
+    when Bool.and(width >= 0, width <= 45)
+    String.len(fit(s, width)) => width
+
+fn centre(s: String, width: Int) -> String
+    ? "A string centred in `width` characters, the odd space on the right."
+    fit(pad(Int.div(Int.max(0, width - String.len(s)), 2)) + s, width)
+
+verify centre
+    centre("ab", 6) => "  ab  "
+    centre("abc", 6) => " abc  "
+
+fn digits(n: Int, width: Int) -> String
+    ? "The last `width` digits of a non-negative number, with leading zeros;"
+      "for widths up to six."
+    text = "000000" + String.fromInt(Int.max(0, n))
+    size = String.len(text)
+    String.slice(text, size - width, size)
+
+verify digits
+    digits(42, 6) => "000042"
+    digits(0, 2) => "00"
+    digits(1234567, 6) => "234567"
+
+verify digits law exactWidth
+    given n: Int = [-3, 0, 42, 999999, 1234567]
+    given width: Int = [1, 2, 6]
+    when Bool.and(width >= 0, width <= 6)
+    String.len(digits(n, width)) => width
+
+fn span(i: Ink, text: String) -> Span
+    ? "A span of text in one ink."
+    Span(ink = i, text = text)
+
+verify span
+    span(Ink.Gold, "x").text => "x"
+
+fn cellsFrom(spans: List<Span>, sofar: Int) -> Int
+    ? "Cells covered by a row of spans, added to a running count."
+    match spans
+        [] -> sofar
+        [s, ..rest] -> cellsFrom(rest, sofar + String.len(s.text))
+
+verify cellsFrom
+    cellsFrom([], 4) => 4
+    cellsFrom([span(Ink.Chalk, "ab")], 4) => 6
+
+fn cells(spans: List<Span>) -> Int
+    ? "How many terminal cells a row of spans covers."
+    cellsFrom(spans, 0)
+
+verify cells
+    cells([]) => 0
+    cells([span(Ink.Chalk, "ab"), span(Ink.Gold, "cde")]) => 5
+
+fn squashInto(s: Span, done: List<Span>) -> List<Span>
+    ? "Put a span in front of a squashed row, joining it with the first span"
+      "there when the two share an ink."
+    match done
+        [] -> [s]
+        [d, ..rest] -> match s.ink == d.ink
+            true -> List.prepend(Span(ink = s.ink, text = s.text + d.text), rest)
+            false -> List.prepend(s, done)
+
+verify squashInto
+    squashInto(span(Ink.Chalk, "a"), []) => [span(Ink.Chalk, "a")]
+    squashInto(span(Ink.Chalk, "a"), [span(Ink.Chalk, "b")]) => [span(Ink.Chalk, "ab")]
+    squashInto(span(Ink.Chalk, "a"), [span(Ink.Gold, "b")]) => [span(Ink.Chalk, "a"), span(Ink.Gold, "b")]
+
+fn squashOnto(backwards: List<Span>, done: List<Span>) -> List<Span>
+    ? "Squash a row given last span first, in front of a part already done."
+    match backwards
+        [] -> done
+        [s, ..rest] -> squashOnto(rest, squashInto(s, done))
+
+verify squashOnto
+    squashOnto([], [span(Ink.Chalk, "z")]) => [span(Ink.Chalk, "z")]
+    squashOnto([span(Ink.Chalk, "b"), span(Ink.Chalk, "a")], []) => [span(Ink.Chalk, "ab")]
+
+fn squash(spans: List<Span>) -> List<Span>
+    ? "Join neighbouring spans of the same ink, so the shell changes colour"
+      "only where the colour changes. The text and its width stay the same."
+    squashOnto(List.reverse(spans), [])
+
+verify squash
+    squash([]) => []
+    squash([span(Ink.Chalk, "a"), span(Ink.Chalk, "b"), span(Ink.Gold, "c"), span(Ink.Chalk, "d")]) => [span(Ink.Chalk, "ab"), span(Ink.Gold, "c"), span(Ink.Chalk, "d")]
+
+verify squash law keepsWidth
+    given spans: List<Span> = [[], [span(Ink.Chalk, "a")], [span(Ink.Chalk, "a"), span(Ink.Chalk, "bc"), span(Ink.Gold, "c"), span(Ink.Chalk, "d")]]
+    cells(squash(spans)) => cells(spans)
+
+fn boxed(inner: List<Span>) -> List<Span>
+    ? "A field row: the inner spans between the two side walls."
+    squash(List.prepend(span(Ink.Chalk, "│"), List.concat(inner, [span(Ink.Chalk, "│")])))
+
+verify boxed
+    boxed([span(Ink.Chalk, "  ")]) => [span(Ink.Chalk, "│  │")]
+    boxed([span(Ink.Gold, "ab")]) => [span(Ink.Chalk, "│"), span(Ink.Gold, "ab"), span(Ink.Chalk, "│")]
+
+fn eggBits(index: Int) -> Int
+    ? "Braille dot values of the egg, four dots wide and five tall: four"
+      "phases of two rows of three cells, indexed phase * 6 + row * 3 + cell."
+      "The phase is how many dots the egg has moved right and down from a"
+      "cell corner along the chute."
+    match index
+        0 -> 254
+        1 -> 247
+        3 -> 8
+        4 -> 1
+        6 -> 160
+        7 -> 246
+        8 -> 68
+        9 -> 8
+        10 -> 27
+        11 -> 1
+        12 -> 224
+        13 -> 196
+        15 -> 59
+        16 -> 31
+        19 -> 192
+        21 -> 56
+        22 -> 255
+        23 -> 7
+        _ -> 0
+
+verify eggBits
+    eggBits(0) => 254
+    eggBits(2) => 0
+    eggBits(22) => 255
+    eggBits(99) => 0
+
+fn dotsOf(roll: Int) -> Int
+    ? "How many Braille dots along its chute an egg is drawn at, 0 to 18."
+    Int.min(18, Int.max(0, Int.div(roll, 32)))
+
+verify dotsOf
+    dotsOf(0) => 0
+    dotsOf(100) => 3
+    dotsOf(9000) => 18
+
+fn spriteBits(dots: Int, cell: Int, row: Int) -> Int
+    ? "Dot value an egg at `dots` along a left chute adds to a cell of the"
+      "chute's eleven by six cells; zero where the egg is not."
+    dx = cell - Int.div(dots, 2)
+    dy = row - Int.div(dots, 4)
+    match Bool.and(Bool.and(dx >= 0, dx <= 2), Bool.and(dy >= 0, dy <= 1))
+        true -> eggBits(Int.mod(dots, 4) * 6 + dy * 3 + dx)
+        false -> 0
+
+verify spriteBits
+    spriteBits(0, 0, 0) => 254
+    spriteBits(0, 1, 0) => 247
+    spriteBits(0, 3, 0) => 0
+    spriteBits(18, 9, 4) => 224
+    spriteBits(18, 9, 5) => 59
+
+fn chuteBits(cell: Int, row: Int) -> Int
+    ? "Dot value of the chute itself in a cell: a line that drops one dot for"
+      "every dot it runs, from the second row down, two cells to a row."
+    match cell - 2 * (row - 1)
+        0 -> match Bool.and(row >= 1, row <= 5)
+            true -> 17
+            false -> 0
+        1 -> match Bool.and(row >= 1, row <= 5)
+            true -> 132
+            false -> 0
+        _ -> 0
+
+verify chuteBits
+    chuteBits(0, 1) => 17
+    chuteBits(1, 1) => 132
+    chuteBits(9, 5) => 132
+    chuteBits(0, 0) => 0
+    chuteBits(-1, 0) => 0
+    chuteBits(5, 1) => 0
+
+fn rollsOn(eggs: List<Egg>, chute: Chute, found: List<Int>) -> List<Int>
+    ? "Where the eggs of one chute are drawn, in dots, added to `found`."
+    match eggs
+        [] -> found
+        [e, ..rest] -> match Core.under(e.chute, chute)
+            true -> rollsOn(rest, chute, List.prepend(dotsOf(e.roll), found))
+            false -> rollsOn(rest, chute, found)
+
+verify rollsOn
+    rollsOn([], Chute.LeftUp, []) => []
+    rollsOn([Egg(chute = Chute.LeftUp, roll = 100), Egg(chute = Chute.RightUp, roll = 40), Egg(chute = Chute.LeftUp, roll = 320)], Chute.LeftUp, []) => [10, 3]
+
+fn eggsBits(places: List<Int>, cell: Int, row: Int, sofar: Int) -> Int
+    ? "Dot value the eggs of a chute add to one cell, added to `sofar`."
+    match places
+        [] -> sofar
+        [dots, ..rest] -> eggsBits(rest, cell, row, sofar + spriteBits(dots, cell, row))
+
+verify eggsBits
+    eggsBits([], 0, 0, 5) => 5
+    eggsBits([0], 0, 0, 0) => 254
+    eggsBits([0, 18], 9, 4, 0) => 224
+
+fn cellBits(places: List<Int>, cell: Int, row: Int) -> Int
+    ? "Dot value of one cell of a left chute: the chute's line and the eggs"
+      "on it. They never share a dot, so the sum is the picture."
+    Int.min(255, chuteBits(cell, row) + eggsBits(places, cell, row, 0))
+
+verify cellBits
+    cellBits([], 0, 1) => 17
+    cellBits([0], 0, 0) => 254
+    cellBits([0], 0, 1) => 25
+    cellBits([], 5, 0) => 0
+
+verify cellBits law oneBrailleCell
+    given places: List<Int> = [[], [0], [3, 18], [5, 6, 7]]
+    given cell: Int = [0, 1, 4, 9, 10]
+    given row: Int = [0, 1, 3, 5]
+    Bool.and(cellBits(places, cell, row) >= 0, cellBits(places, cell, row) <= 255) => true
+
+fn mirror(bits: Int) -> Int
+    ? "Dot value of a Braille cell seen in a mirror: its two columns of dots"
+      "change places."
+    Int.mod(Int.div(bits, 8), 8) + Int.mod(bits, 8) * 8 + Int.div(bits, 128) * 64 + Int.mod(Int.div(bits, 64), 2) * 128
+
+verify mirror
+    mirror(0) => 0
+    mirror(17) => 10
+    mirror(132) => 96
+    mirror(255) => 255
+
+verify mirror law twiceIsNothing
+    given bits: Int = [0, 1, 17, 64, 132, 200, 255]
+    when Bool.and(bits >= 0, bits <= 255)
+    mirror(mirror(bits)) => bits
+
+fn braille(bits: Int) -> String
+    ? "The one-cell string with these Braille dots; a space for none."
+    match bits <= 0
+        true -> " "
+        false -> Option.withDefault(String.fromCodePoint(10240 + Int.min(255, bits)), " ")
+
+verify braille
+    braille(0) => " "
+    braille(17) => "⠑"
+    braille(254) => "⣾"
+
+fn chuteLeft(places: List<Int>, row: Int) -> String
+    ? "One row of a left chute's eleven cells, with the eggs on it."
+    braille(cellBits(places, 0, row)) + braille(cellBits(places, 1, row)) + braille(cellBits(places, 2, row)) + braille(cellBits(places, 3, row)) + braille(cellBits(places, 4, row)) + braille(cellBits(places, 5, row)) + braille(cellBits(places, 6, row)) + braille(cellBits(places, 7, row)) + braille(cellBits(places, 8, row)) + braille(cellBits(places, 9, row)) + braille(cellBits(places, 10, row))
+
+verify chuteLeft
+    chuteLeft([], 0) => "           "
+    chuteLeft([], 1) => "⠑⢄         "
+    chuteLeft([0], 0) => "⣾⣷         "
+    chuteLeft([], 5) => "        ⠑⢄ "
+
+verify chuteLeft law elevenCells
+    given places: List<Int> = [[], [0], [3, 18], [5, 6, 7]]
+    given row: Int = [0, 1, 3, 5]
+    String.len(chuteLeft(places, row)) => 11
+
+fn chuteRight(places: List<Int>, row: Int) -> String
+    ? "One row of a right chute: the left chute's row in a mirror."
+    braille(mirror(cellBits(places, 10, row))) + braille(mirror(cellBits(places, 9, row))) + braille(mirror(cellBits(places, 8, row))) + braille(mirror(cellBits(places, 7, row))) + braille(mirror(cellBits(places, 6, row))) + braille(mirror(cellBits(places, 5, row))) + braille(mirror(cellBits(places, 4, row))) + braille(mirror(cellBits(places, 3, row))) + braille(mirror(cellBits(places, 2, row))) + braille(mirror(cellBits(places, 1, row))) + braille(mirror(cellBits(places, 0, row)))
+
+verify chuteRight
+    chuteRight([], 0) => "           "
+    chuteRight([], 1) => "         ⡠⠊"
+    chuteRight([0], 0) => "         ⣾⣷"
+
+verify chuteRight law elevenCells
+    given places: List<Int> = [[], [0], [3, 18], [5, 6, 7]]
+    given row: Int = [0, 1, 3, 5]
+    String.len(chuteRight(places, row)) => 11
+
+fn isReady(b: Board, chute: Chute) -> Bool
+    ? "Whether the hen of a chute is getting ready: she lays the next egg"
+      "within half a second."
+    Bool.and(Core.under(b.nextChute, chute), b.cooldown <= 12)
+
+verify isReady
+    isReady(Board.update(Core.startBoard(7, Mode.Easy, 0), nextChute = Chute.RightUp, cooldown = 5), Chute.RightUp) => true
+    isReady(Board.update(Core.startBoard(7, Mode.Easy, 0), nextChute = Chute.RightUp, cooldown = 5), Chute.LeftUp) => false
+    isReady(Board.update(Core.startBoard(7, Mode.Easy, 0), nextChute = Chute.RightUp, cooldown = 20), Chute.RightUp) => false
+
+fn henInk(ready: Bool) -> Ink
+    ? "A hen's ink: gold while she is getting ready, plain otherwise."
+    match ready
+        true -> Ink.Gold
+        false -> Ink.Chalk
+
+verify henInk
+    henInk(true) => Ink.Gold
+    henInk(false) => Ink.Chalk
+
+fn henLeft(ready: Bool, row: Int) -> String
+    ? "Three cells left of a left chute: the hen on the first row, with her"
+      "beak open while she is getting ready, and her perch on the second."
+    match row
+        0 -> match ready
+            true -> "(O>"
+            false -> "(o>"
+        1 -> "━━━"
+        _ -> "   "
+
+verify henLeft
+    henLeft(false, 0) => "(o>"
+    henLeft(true, 0) => "(O>"
+    henLeft(false, 1) => "━━━"
+    henLeft(true, 4) => "   "
+
+fn henRight(ready: Bool, row: Int) -> String
+    ? "Three cells right of a right chute: the hen of the left side, turned."
+    match row
+        0 -> match ready
+            true -> "<O)"
+            false -> "<o)"
+        1 -> "━━━"
+        _ -> "   "
+
+verify henRight
+    henRight(false, 0) => "<o)"
+    henRight(true, 0) => "<O)"
+    henRight(false, 1) => "━━━"
+    henRight(true, 4) => "   "
+
+fn leftSide(b: Board, chute: Chute, row: Int) -> List<Span>
+    ? "Fourteen cells of the left half on one row of a chute: hen and perch,"
+      "then the chute with its eggs."
+    ready = isReady(b, chute)
+    [span(henInk(ready), henLeft(ready, row)), span(Ink.Shell, chuteLeft(rollsOn(b.eggs, chute, []), row))]
+
+verify leftSide
+    leftSide(Core.startBoard(7, Mode.Easy, 0), Chute.LeftUp, 1) => [span(Ink.Chalk, "━━━"), span(Ink.Shell, "⠑⢄         ")]
+    cells(leftSide(Board.update(Core.startBoard(7, Mode.Easy, 0), nextChute = Chute.LeftDown, cooldown = 3), Chute.LeftDown, 0)) => 14
+
+fn rightSide(b: Board, chute: Chute, row: Int) -> List<Span>
+    ? "Fourteen cells of the right half on one row of a chute: the chute with"
+      "its eggs, then perch and hen."
+    ready = isReady(b, chute)
+    [span(Ink.Shell, chuteRight(rollsOn(b.eggs, chute, []), row)), span(henInk(ready), henRight(ready, row))]
+
+verify rightSide
+    rightSide(Core.startBoard(7, Mode.Easy, 0), Chute.RightUp, 1) => [span(Ink.Shell, "         ⡠⠊"), span(Ink.Chalk, "━━━")]
+    cells(rightSide(Board.update(Core.startBoard(7, Mode.Easy, 0), nextChute = Chute.RightDown, cooldown = 3), Chute.RightDown, 0)) => 14
+
+fn robot(row: Int) -> String
+    ? "Seven cells of the robot on a field row: head, body, legs."
+    match row
+        5 -> "┌─────┐"
+        6 -> "│ ● ● │"
+        7 -> "└──┬──┘"
+        8 -> "╔══╧══╗"
+        9 -> "║ ░░░ ║"
+        10 -> "╚╤═══╤╝"
+        11 -> " │   │ "
+        12 -> " ┴   ┴ "
+        _ -> "       "
+
+verify robot
+    robot(0) => "       "
+    robot(6) => "│ ● ● │"
+    robot(12) => " ┴   ┴ "
+
+fn basketRow(at: Chute) -> Int
+    ? "The field row the basket is on: just under the end of its chute."
+    match Core.isUpper(at)
+        true -> 6
+        false -> 12
+
+verify basketRow
+    basketRow(Chute.LeftUp) => 6
+    basketRow(Chute.RightDown) => 12
+
+fn armRow(at: Chute) -> Int
+    ? "The field row the robot's arm crosses on its way to the basket."
+    match Core.isUpper(at)
+        true -> 7
+        false -> 11
+
+verify armRow
+    armRow(Chute.RightUp) => 7
+    armRow(Chute.LeftDown) => 11
+
+fn basket(flash: Int) -> String
+    ? "The basket, three cells wide; an egg shows in it just after a catch."
+    match flash > 0
+        true -> "╲●╱"
+        false -> "╲▂╱"
+
+verify basket
+    basket(0) => "╲▂╱"
+    basket(3) => "╲●╱"
+
+fn hand(holds: Bool, row: Int, at: Chute, flash: Int) -> String
+    ? "Three cells beside the robot on a row: the basket when this is its"
+      "side and its row, air otherwise."
+    match Bool.and(holds, row == basketRow(at))
+        true -> basket(flash)
+        false -> "   "
+
+verify hand
+    hand(true, 6, Chute.LeftUp, 0) => "╲▂╱"
+    hand(true, 7, Chute.LeftUp, 0) => "   "
+    hand(false, 6, Chute.RightUp, 0) => "   "
+
+fn arm(holds: Bool, row: Int, at: Chute, rising: Bool) -> String
+    ? "One cell between robot and basket on a row: the arm when this is the"
+      "basket's side and the arm's row, drawn rising or falling to the right."
+    match Bool.and(holds, row == armRow(at))
+        true -> match rising
+            true -> "╱"
+            false -> "╲"
+        false -> " "
+
+verify arm
+    arm(true, 7, Chute.LeftUp, false) => "╲"
+    arm(true, 11, Chute.LeftDown, true) => "╱"
+    arm(true, 8, Chute.LeftUp, false) => " "
+    arm(false, 7, Chute.RightUp, true) => " "
+
+fn middle(at: Chute, flash: Int, row: Int) -> String
+    ? "Fifteen cells between the chutes on a field row: the robot, and on"
+      "the side of the basket its arm and the basket."
+    left = Core.isLeft(at)
+    right = Bool.not(left)
+    upper = Core.isUpper(at)
+    hand(left, row, at, flash) + arm(left, row, at, Bool.not(upper)) + robot(row) + arm(right, row, at, upper) + hand(right, row, at, flash)
+
+verify middle
+    middle(Chute.LeftUp, 0, 6) => "╲▂╱ │ ● ● │    "
+    middle(Chute.LeftUp, 0, 7) => "   ╲└──┬──┘    "
+    middle(Chute.RightUp, 0, 7) => "    └──┬──┘╱   "
+    middle(Chute.LeftDown, 0, 11) => "   ╱ │   │     "
+    middle(Chute.RightDown, 3, 12) => "     ┴   ┴  ╲●╱"
+    middle(Chute.RightDown, 0, 0) => "               "
+
+verify middle law fifteenCells
+    given at: Chute = [Chute.LeftUp, Chute.LeftDown, Chute.RightUp, Chute.RightDown]
+    given flash: Int = [0, 3]
+    given row: Int = [0, 5, 6, 7, 11, 12]
+    String.len(middle(at, flash, row)) => 15
+
+fn sides(b: Board, row: Int) -> List<Span>
+    ? "The 43 cells of a field row: the left chute of that height, the"
+      "robot, the right chute. The last row has no chute, only ground to"
+      "stand on."
+    core = span(Ink.Wicker, middle(b.at, b.flash, row))
+    lower = row - 6
+    match row <= 5
+        true -> List.concat(leftSide(b, Chute.LeftUp, row), List.prepend(core, rightSide(b, Chute.RightUp, row)))
+        false -> match row <= 11
+            true -> List.concat(leftSide(b, Chute.LeftDown, lower), List.prepend(core, rightSide(b, Chute.RightDown, lower)))
+            false -> [span(Ink.Chalk, pad(14)), core, span(Ink.Chalk, pad(14))]
+
+verify sides
+    cells(sides(Core.startBoard(7, Mode.Easy, 0), 0)) => 43
+    cells(sides(Core.startBoard(7, Mode.Easy, 0), 8)) => 43
+    cells(sides(Core.startBoard(7, Mode.Easy, 0), 12)) => 43
+
+fn fieldRow(b: Board, row: Int) -> List<Span>
+    ? "One field row between the walls."
+    boxed(sides(b, row))
+
+verify fieldRow
+    fieldRow(Core.startBoard(7, Mode.Easy, 0), 0) => [span(Ink.Chalk, "│(o>"), span(Ink.Shell, "           "), span(Ink.Wicker, "               "), span(Ink.Shell, "           "), span(Ink.Chalk, "<o)│")]
+    cells(fieldRow(Core.startBoard(7, Mode.Easy, 0), 6)) => 45
+
+fn playRows(b: Board) -> List<List<Span>>
+    ? "The thirteen field rows of a run in progress, top to bottom."
+    [fieldRow(b, 0), fieldRow(b, 1), fieldRow(b, 2), fieldRow(b, 3), fieldRow(b, 4), fieldRow(b, 5), fieldRow(b, 6), fieldRow(b, 7), fieldRow(b, 8), fieldRow(b, 9), fieldRow(b, 10), fieldRow(b, 11), fieldRow(b, 12)]
+
+verify playRows
+    List.len(playRows(Core.startBoard(7, Mode.Easy, 0))) => 13
+
+fn roofRow() -> List<Span>
+    ? "The row above the field."
+    [span(Ink.Chalk, "┌───────────────────────────────────────────┐")]
+
+verify roofRow
+    cells(roofRow()) => 45
+
+fn ground() -> String
+    ? "The ground under the field, one character per cell of the frame."
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+
+verify ground
+    String.len(ground()) => 45
+
+fn splatColumn(chute: Chute) -> Int
+    ? "The frame column where an egg from a chute breaks: under the end of"
+      "the chute, on its side of the robot."
+    match Core.isLeft(chute)
+        true -> 12
+        false -> 30
+
+verify splatColumn
+    splatColumn(Chute.LeftUp) => 12
+    splatColumn(Chute.RightDown) => 30
+
+fn groundRow(b: Board) -> List<Span>
+    ? "The row under the field, with a broken egg where one fell a moment ago."
+    left = splatColumn(b.splatChute)
+    match b.splat > 0
+        true -> [span(Ink.Leaf, String.slice(ground(), 0, left)), span(Ink.Gold, "▟█▙"), span(Ink.Leaf, String.slice(ground(), left + 3, 45))]
+        false -> [span(Ink.Leaf, ground())]
+
+verify groundRow
+    groundRow(Core.startBoard(7, Mode.Easy, 0)) => [span(Ink.Leaf, ground())]
+    groundRow(Board.update(Core.startBoard(7, Mode.Easy, 0), splat = 4, splatChute = Chute.LeftDown)) => [span(Ink.Leaf, "▀▀▀▀▀▀▀▀▀▀▀▀"), span(Ink.Gold, "▟█▙"), span(Ink.Leaf, "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀")]
+    cells(groundRow(Board.update(Core.startBoard(7, Mode.Easy, 0), splat = 4, splatChute = Chute.RightUp))) => 45
+
+fn lifeMarks(lives: Int) -> String
+    ? "Three marks for the lives: filled for the ones left, hollow for the"
+      "ones lost."
+    match lives
+        3 -> "● ● ●"
+        2 -> "● ● ○"
+        1 -> "● ○ ○"
+        _ -> "○ ○ ○"
+
+verify lifeMarks
+    lifeMarks(3) => "● ● ●"
+    lifeMarks(1) => "● ○ ○"
+    lifeMarks(0) => "○ ○ ○"
+
+fn scoreRow(points: Int, best: Int) -> List<Span>
+    ? "First row of the frame: the score on the left, the session's best on"
+      "the right."
+    [span(Ink.Chalk, " SCORE "), span(Ink.Shell, digits(points, 6)), span(Ink.Chalk, pad(20) + "BEST "), span(Ink.Gold, digits(best, 6)), span(Ink.Chalk, " ")]
+
+verify scoreRow
+    scoreRow(42, 120) => [span(Ink.Chalk, " SCORE "), span(Ink.Shell, "000042"), span(Ink.Chalk, "                    BEST "), span(Ink.Gold, "000120"), span(Ink.Chalk, " ")]
+    cells(scoreRow(0, 0)) => 45
+
+fn modeName(mode: Mode) -> String
+    ? "A mode as the frame names it."
+    match mode
+        Mode.Easy -> "EASY"
+        Mode.Hard -> "HARD"
+
+verify modeName
+    modeName(Mode.Easy) => "EASY"
+    modeName(Mode.Hard) => "HARD"
+
+fn statusRow(b: Board) -> List<Span>
+    ? "Second row of the frame: lives, mode and the run of catches, level."
+    [span(Ink.Alert, " " + lifeMarks(b.lives)), span(Ink.Gold, centre("{modeName(b.mode)}   STREAK {String.fromInt(b.streak)}", 27)), span(Ink.Chalk, fit("LEVEL {String.fromInt(Core.level(b.caught) + 1)}", 12))]
+
+verify statusRow
+    statusRow(Core.startBoard(7, Mode.Easy, 0)) => [span(Ink.Alert, " ● ● ●"), span(Ink.Gold, "      EASY   STREAK 0      "), span(Ink.Chalk, "LEVEL 1     ")]
+    cells(statusRow(Board.update(Core.startBoard(7, Mode.Hard, 0), streak = 120, caught = 400, lives = 1))) => 45
+
+fn helpRow(text: String) -> List<Span>
+    ? "Last row of the frame: one line of key help."
+    [span(Ink.Chalk, centre(text, 45))]
+
+verify helpRow
+    helpRow("Esc quit") => [span(Ink.Chalk, "                  Esc quit                   ")]
+
+fn note(i: Ink, text: String) -> List<Span>
+    ? "A field row holding one centred line of text in one ink."
+    boxed([span(i, centre(text, 43))])
+
+verify note
+    note(Ink.Chalk, "") => [span(Ink.Chalk, "│                                           │")]
+    cells(note(Ink.Gold, "E G G   C A T C H")) => 45
+
+fn blink(tick: Int, text: String) -> String
+    ? "A prompt that is shown for half a second and hidden for half a second."
+    match Int.mod(Int.div(tick, 12), 2) == 0
+        true -> text
+        false -> ""
+
+verify blink
+    blink(0, "go") => "go"
+    blink(12, "go") => ""
+    blink(24, "go") => "go"
+
+fn titleRows(l: Lobby) -> List<List<Span>>
+    ? "The thirteen field rows of the title screen: the name, what the game"
+      "asks, the basket keys laid out like the chutes, the rules, and the"
+      "prompt."
+    gap = note(Ink.Chalk, "")
+    [
+        gap,
+        note(Ink.Gold, "E G G   C A T C H"),
+        gap,
+        note(Ink.Chalk, "four hens, four chutes, one basket:"),
+        note(Ink.Chalk, "be under each egg as it rolls off"),
+        gap,
+        note(Ink.Wicker, "Q ↖   ↗ P"),
+        note(Ink.Wicker, "A ↙   ↘ L"),
+        note(Ink.Chalk, "or the arrow keys"),
+        gap,
+        note(Ink.Chalk, "three broken eggs end the run"),
+        note(Ink.Chalk, "15 catches in a row mend one"),
+        note(Ink.Gold, blink(l.tick, "press 1 for easy, 2 for hard")),
+    ]
+
+verify titleRows
+    List.len(titleRows(Lobby(seed = 7, tick = 0, best = 0, mode = Mode.Easy))) => 13
+
+fn pausedRows() -> List<List<Span>>
+    ? "The thirteen field rows of a paused run. The eggs are hidden, so a"
+      "pause cannot be used to study the board."
+    gap = note(Ink.Chalk, "")
+    [gap, gap, gap, gap, gap, note(Ink.Gold, "P A U S E D"), gap, note(Ink.Wicker, "press Z to go on"), gap, gap, gap, gap, gap]
+
+verify pausedRows
+    List.len(pausedRows()) => 13
+
+fn verdict(b: Board) -> String
+    ? "One line under GAME OVER: whether the run beat the session's best."
+    match Bool.and(b.score > b.best, b.score > 0)
+        true -> "* new best *"
+        false -> "best {String.fromInt(b.best)}"
+
+verify verdict
+    verdict(Board.update(Core.startBoard(7, Mode.Easy, 40), score = 90)) => "* new best *"
+    verdict(Board.update(Core.startBoard(7, Mode.Easy, 40), score = 12)) => "best 40"
+    verdict(Core.startBoard(7, Mode.Easy, 0)) => "best 0"
+
+fn overRows(b: Board) -> List<List<Span>>
+    ? "The thirteen field rows of a finished run: the score, how it compares,"
+      "what was caught, and the prompt for the next run."
+    gap = note(Ink.Chalk, "")
+    [
+        gap,
+        note(Ink.Alert, "G A M E   O V E R"),
+        gap,
+        note(Ink.Shell, "score {String.fromInt(b.score)}"),
+        note(Ink.Gold, verdict(b)),
+        gap,
+        note(Ink.Chalk, "eggs caught    {String.fromInt(b.caught)}"),
+        note(Ink.Chalk, "longest streak {String.fromInt(b.bestStreak)}"),
+        note(Ink.Chalk, "level reached  {String.fromInt(Core.level(b.caught) + 1)} ({modeName(b.mode)})"),
+        gap,
+        note(Ink.Wicker, "SPACE again     1 easy     2 hard"),
+        gap,
+        gap,
+    ]
+
+verify overRows
+    List.len(overRows(Core.startBoard(7, Mode.Easy, 0))) => 13
+
+fn framed(top: List<List<Span>>, field: List<List<Span>>, under: List<Span>, help: String) -> List<List<Span>>
+    ? "A whole frame: the two rows of numbers, the roof, thirteen field"
+      "rows, the ground, and the help line — eighteen rows of 45 cells."
+    List.concat(top, List.prepend(roofRow(), List.concat(field, [under, helpRow(help)])))
+
+verify framed
+    List.len(framed([scoreRow(0, 0), statusRow(Core.startBoard(7, Mode.Easy, 0))], pausedRows(), groundRow(Core.startBoard(7, Mode.Easy, 0)), "")) => 18
+
+fn boardTop(b: Board) -> List<List<Span>>
+    ? "The two rows of numbers above a board."
+    [scoreRow(b.score, Core.bestOf(b)), statusRow(b)]
+
+verify boardTop
+    boardTop(Core.startBoard(7, Mode.Easy, 0)) => [scoreRow(0, 0), statusRow(Core.startBoard(7, Mode.Easy, 0))]
+
+fn bare() -> List<Span>
+    ? "The ground with nothing broken on it, for the screens that show the"
+      "frame without a run going on."
+    [span(Ink.Leaf, ground())]
+
+verify bare
+    cells(bare()) => 45
+
+fn render(gs: GameState) -> List<List<Span>>
+    ? "Draw one frame as rows of coloured spans. Total: eighteen rows of 45"
+      "cells for every state, so the shell can paint rows in place."
+    match gs
+        GameState.Title(l) -> framed([scoreRow(0, l.best), statusRow(Core.startBoard(0, l.mode, 0))], titleRows(l), bare(), "1 easy   2 hard   Esc quit")
+        GameState.Playing(b) -> framed(boardTop(b), playRows(b), groundRow(b), "Q A P L or arrows   Z pause   Esc quit")
+        GameState.Paused(b) -> framed(boardTop(b), pausedRows(), bare(), "Z resume   Esc quit")
+        GameState.Over(b) -> framed(boardTop(b), overRows(b), bare(), "SPACE again   1 easy   2 hard   Esc quit")
+
+verify render
+    List.len(render(GameState.Title(Lobby(seed = 7, tick = 0, best = 0, mode = Mode.Easy)))) => 18
+    List.len(render(GameState.Playing(Core.startBoard(7, Mode.Easy, 0)))) => 18
+    render(GameState.Paused(Core.startBoard(7, Mode.Easy, 0))) => framed(boardTop(Core.startBoard(7, Mode.Easy, 0)), pausedRows(), bare(), "Z resume   Esc quit")
+    render(GameState.Over(Core.startBoard(7, Mode.Easy, 0))) => framed(boardTop(Core.startBoard(7, Mode.Easy, 0)), overRows(Core.startBoard(7, Mode.Easy, 0)), bare(), "SPACE again   1 easy   2 hard   Esc quit")
+
+verify render law eighteenRows
+    given gs: GameState = [Core.lobby(7), GameState.Title(Lobby(seed = 7, tick = 12, best = 999999, mode = Mode.Hard)), GameState.Playing(Core.startBoard(7, Mode.Easy, 0)), GameState.Playing(Board.update(Core.startBoard(1, Mode.Hard, 999999), score = 999999, lives = 1, streak = 1234, caught = 5000, at = Chute.RightDown, flash = 3, splat = 3, splatChute = Chute.RightUp, cooldown = 4, nextChute = Chute.LeftDown, eggs = [Egg(chute = Chute.LeftUp, roll = 3), Egg(chute = Chute.RightDown, roll = 575), Egg(chute = Chute.RightUp, roll = 200), Egg(chute = Chute.LeftDown, roll = 400)])), GameState.Paused(Core.startBoard(7, Mode.Easy, 0)), GameState.Over(Board.update(Core.startBoard(3, Mode.Hard, 40), score = 428, lives = 0, caught = 77, bestStreak = 31))]
+    List.len(render(gs)) => 18
+
+verify render law everyRowFillsTheFrame
+    given gs: GameState = [Core.lobby(7), GameState.Title(Lobby(seed = 7, tick = 12, best = 999999, mode = Mode.Hard)), GameState.Playing(Core.startBoard(7, Mode.Easy, 0)), GameState.Playing(Board.update(Core.startBoard(1, Mode.Hard, 999999), score = 999999, lives = 1, streak = 1234, caught = 5000, at = Chute.RightDown, flash = 3, splat = 3, splatChute = Chute.RightUp, cooldown = 4, nextChute = Chute.LeftDown, eggs = [Egg(chute = Chute.LeftUp, roll = 3), Egg(chute = Chute.RightDown, roll = 575), Egg(chute = Chute.RightUp, roll = 200), Egg(chute = Chute.LeftDown, roll = 400)])), GameState.Paused(Core.startBoard(7, Mode.Easy, 0)), GameState.Over(Board.update(Core.startBoard(3, Mode.Hard, 40), score = 428, lives = 0, caught = 77, bestStreak = 31))]
+    allWide(render(gs), 45) => true
+
+fn allWide(rows: List<List<Span>>, n: Int) -> Bool
+    ? "Whether every row of a frame covers exactly `n` cells."
+    match rows
+        [] -> true
+        [row, ..rest] -> match cells(row) == n
+            true -> allWide(rest, n)
+            false -> false
+
+verify allWide
+    allWide([], 3) => true
+    allWide([[span(Ink.Chalk, "abc")], [span(Ink.Chalk, "a"), span(Ink.Gold, "bc")]], 3) => true
+    allWide([[span(Ink.Chalk, "abc")], [span(Ink.Chalk, "a")]], 3) => false
+
+fn changedFrom(shown: List<List<Span>>, next: List<List<Span>>, y: Int, found: List<Line>) -> List<Line>
+    ? "The rows of the next frame that differ from the frame on screen, each"
+      "with its row number, counting from `y`. The shell repaints only these,"
+      "so a frame costs what moved in it. An empty shown frame yields every"
+      "row. The rows come out bottom first; painting does not care."
+    match next
+        [] -> found
+        [row, ..rest] -> changedRow(shown, row, rest, y, found)
+
+verify changedFrom
+    changedFrom([], [], 0, []) => []
+    changedFrom([], [[span(Ink.Chalk, "a")]], 4, []) => [Line(y = 4, spans = [span(Ink.Chalk, "a")])]
+    changedFrom([[span(Ink.Chalk, "a")], [span(Ink.Chalk, "b")]], [[span(Ink.Chalk, "a")], [span(Ink.Gold, "b")]], 0, []) => [Line(y = 1, spans = [span(Ink.Gold, "b")])]
+
+verify changedFrom law sameFrameNeedsNoPaint
+    given gs: GameState = [Core.lobby(7), GameState.Playing(Core.startBoard(7, Mode.Easy, 0)), GameState.Over(Core.startBoard(3, Mode.Hard, 40))]
+    changedFrom(render(gs), render(gs), 0, []) => []
+
+verify changedFrom law firstFrameIsWhole
+    given gs: GameState = [Core.lobby(7), GameState.Playing(Core.startBoard(7, Mode.Easy, 0)), GameState.Over(Core.startBoard(3, Mode.Hard, 40))]
+    List.len(changedFrom([], render(gs), 0, [])) => 18
+
+fn changedRow(shown: List<List<Span>>, row: List<Span>, rest: List<List<Span>>, y: Int, found: List<Line>) -> List<Line>
+    ? "One row of the comparison: keep it when nothing is on screen there or"
+      "what is there differs, then go on with the rows below."
+    match shown
+        [] -> changedFrom([], rest, y + 1, List.prepend(Line(y = y, spans = row), found))
+        [old, ..older] -> match old == row
+            true -> changedFrom(older, rest, y + 1, found)
+            false -> changedFrom(older, rest, y + 1, List.prepend(Line(y = y, spans = row), found))
+
+verify changedRow
+    changedRow([], [span(Ink.Chalk, "a")], [], 2, []) => [Line(y = 2, spans = [span(Ink.Chalk, "a")])]
+    changedRow([[span(Ink.Chalk, "a")]], [span(Ink.Chalk, "a")], [], 2, []) => []
+    changedRow([[span(Ink.Chalk, "a")]], [span(Ink.Chalk, "b")], [], 2, []) => [Line(y = 2, spans = [span(Ink.Chalk, "b")])]
