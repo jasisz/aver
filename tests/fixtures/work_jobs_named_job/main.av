@@ -1,0 +1,15 @@
+module Main
+    depends [Node, State, Tasks, Scorer, Wait, Work]
+    intent = "A program with its own type named Job beside Work.Job, on the job boundary."
+    exposes [main]
+    effects [Console.print, Scorer.begin, Scorer.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Begins one job, waits for it and prints its score."
+    ! [Console.print, Scorer.begin, Scorer.take, Wait.poll]
+    job = Scorer.begin(Tasks.Task(text = "alpha", kinds = [State.Job.Light(2), State.Job.Heavy(1)]))?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(job)}
+    _ready = Wait.poll(pending, 5000)?
+    match Scorer.take(job)?
+        Option.None -> Result.Err("not ready")
+        Option.Some(r) -> Result.Ok(Console.print("scored {r.score}"))

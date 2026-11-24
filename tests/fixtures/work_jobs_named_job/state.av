@@ -1,0 +1,19 @@
+module State
+    intent = "A program type that happens to be named Job, as Work's handle is."
+    exposes [Job, weightOf]
+    depends []
+    effects []
+
+type Job
+    Light(Int)
+    Heavy(Int)
+
+fn weightOf(j: Job) -> Int
+    ? "The weight a job names."
+    match j
+        Job.Light(w) -> w
+        Job.Heavy(w) -> w * 10
+
+verify weightOf
+    weightOf(Job.Light(2)) => 2
+    weightOf(Job.Heavy(2)) => 20

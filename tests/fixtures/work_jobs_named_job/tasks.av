@@ -1,0 +1,13 @@
+module Tasks
+    depends [State]
+    intent = "The task and the answer of a scoring job; the task holds the program's own Job."
+    exposes [Task, Report]
+    effects []
+
+record Task
+    text: String
+    kinds: List<State.Job>
+
+record Report
+    score: Int
+    last: Option<State.Job>
