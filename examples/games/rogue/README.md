@@ -43,7 +43,7 @@ cd /tmp/rogue-rs && cargo build --release
 ## Features
 
 - Procedurally generated dungeons (pure, deterministic from seed)
-- Field of view with shadowcasting
+- Field of view with symmetric shadowcasting: if you see a monster, it sees you
 - BFS pathfinding for enemy AI
 - Turn-based combat with unique per-enemy mechanics
 - Alert propagation: enemies hear nearby combat and investigate
@@ -56,7 +56,7 @@ cd /tmp/rogue-rs && cargo build --release
 |------|------|
 | `types.av` | Points, tiles, entity/item types, damage formula |
 | `map.av` | Map generation, room placement, corridors |
-| `fov.av` | Shadowcasting field of view |
+| `fov.av` | Symmetric shadowcasting field of view |
 | `pathfinding.av` | BFS pathfinding for AI |
 | `combat.av` | Damage, death, movement, entity management |
 | `render.av` | Terminal rendering, HUD, message log |

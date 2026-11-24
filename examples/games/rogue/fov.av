@@ -1,11 +1,57 @@
 module Fov
     intent =
-        "Field-of-view computation using recursive shadowcasting (8-octant)."
+        "Field of view by symmetric shadowcasting: what the player sees from a tile."
+        "Walls stop light, and two floor tiles see each other or neither does."
     depends [Types]
     effects []
 
-record Visibility
-    visible: List<Point>
+decision SymmetricShadowcasting
+    date = "2026-11-24"
+    author = "szymon"
+    reason =
+        "A floor tile is seen when the line from the eye's centre to its centre is clear,"
+        "so sight is mutual: a monster the player sees can see the player."
+        "A wall is a diamond inscribed in its tile and is seen when any part of it is lit,"
+        "so the walls of a room and of a corridor show without lighting what is behind them."
+        "Slopes are exact fractions, compared by cross-multiplying."
+        "The earlier scan took a tile to reach from its centre to the centre of the next one,"
+        "half a tile to one side, and rounded slopes down to thousandths."
+        "A wall then shadowed twice its width straight ahead and nothing on a diagonal,"
+        "so the player was blind beside a pillar and saw through the corner of a room."
+    chosen = "SymmetricShadowcasting"
+    rejected = ["OctantsWithRoundedSlopes", "RayToEveryTile"]
+    impacts = [computeFov, scanSector, touchesSector, centreInSector]
+
+decision CracksAreClosed
+    date = "2026-11-24"
+    author = "szymon"
+    reason =
+        "Two walls that touch only at a corner leave a crack between their diamonds."
+        "Nobody walks through it, as movement has four directions, so nobody sees through it."
+        "The tile behind the crack stops the light: its diamond fills the crack exactly,"
+        "and no other ray reaches that tile from the same side."
+    chosen = "TileBehindCrackStopsLight"
+    rejected = ["SeeThroughCracks", "SquareWalls"]
+    impacts = [behindCrack, scanTile]
+
+record Slope
+    halfCols: Int
+    depth: Int
+
+record Sector
+    from: Slope
+    to: Slope
+
+record View
+    map: List<List<Tile>>
+    eye: Point
+    radius: Int
+    quadrant: Int
+
+type Passed
+    Nothing
+    Opaque
+    Clear
 
 fn getT(map: List<List<Tile>>, x: Int, y: Int) -> Tile
     ? "Get tile at (x, y), defaulting to Wall if out of bounds"
@@ -44,165 +90,228 @@ verify containsPt
     containsPt([Types.pt(1, 2), Types.pt(3, 4)], Types.pt(5, 6), 0) => false
     containsPt([], Types.pt(0, 0), 0) => false
 
-fn transformOctant(octant: Int, row: Int, col: Int) -> Point
-    ? "Coordinate delta for a given octant, row, and col — returns dx,dy as Point"
-    negRow = 0 - row
-    negCol = 0 - col
-    match octant
-        0 -> Types.pt(col, negRow)
-        1 -> Types.pt(row, negCol)
-        2 -> Types.pt(row, col)
-        3 -> Types.pt(col, row)
-        4 -> Types.pt(negCol, row)
-        5 -> Types.pt(negRow, col)
-        6 -> Types.pt(negRow, negCol)
-        _ -> Types.pt(negCol, negRow)
+fn quadrantTile(view: View, depth: Int, col: Int) -> Point
+    ? "Map position of a tile `depth` steps ahead of the eye and `col` steps to the side."
+      "Quadrants 0 to 3 look north, east, south and west."
+    match view.quadrant
+        0 -> Types.pt(view.eye.x + col, view.eye.y - depth)
+        1 -> Types.pt(view.eye.x + depth, view.eye.y + col)
+        2 -> Types.pt(view.eye.x + col, view.eye.y + depth)
+        _ -> Types.pt(view.eye.x - depth, view.eye.y + col)
 
-verify transformOctant
-    transformOctant(0, 3, 2).x => 2
-    transformOctant(0, 3, 2).y => 0 - 3
-    transformOctant(2, 3, 2).x => 3
-    transformOctant(2, 3, 2).y => 2
-    transformOctant(4, 3, 2).x => 0 - 2
-    transformOctant(4, 3, 2).y => 3
-    transformOctant(7, 3, 2).x => 0 - 2
-    transformOctant(7, 3, 2).y => 0 - 3
+verify quadrantTile
+    quadrantTile(viewOf(["."], Types.pt(5, 5), 0), 3, 2) => Types.pt(7, 2)
+    quadrantTile(viewOf(["."], Types.pt(5, 5), 1), 3, 2) => Types.pt(8, 7)
+    quadrantTile(viewOf(["."], Types.pt(5, 5), 2), 3, 2) => Types.pt(7, 8)
+    quadrantTile(viewOf(["."], Types.pt(5, 5), 3), 3, 2) => Types.pt(2, 7)
 
-fn inRadius(row: Int, col: Int, radius: Int) -> Bool
-    ? "True if (row, col) is within Euclidean radius (squared check)"
-    row * row + col * col <= radius * radius
+fn inRadius(depth: Int, col: Int, radius: Int) -> Bool
+    ? "True if the tile is within the Euclidean radius (squared check)"
+    depth * depth + col * col <= radius * radius
 
 verify inRadius
     inRadius(0, 0, 5) => true
     inRadius(3, 4, 5) => true
     inRadius(4, 4, 5) => false
 
-fn cellStartSlope(col: Int, row: Int) -> Int
-    ? "Start (left) slope of cell: col * 1000 / row"
-    Result.withDefault(Int.div(col * 1000, row), 0)
+fn leftEdge(depth: Int, col: Int) -> Slope
+    ? "Slope of the ray through the left tip of a tile's diamond, half a column left of its centre"
+    Slope(halfCols = 2 * col - 1, depth = depth)
 
-verify cellStartSlope
-    cellStartSlope(0, 1) => 0
-    cellStartSlope(1, 2) => 500
-    cellStartSlope(2, 3) => 666
+verify leftEdge
+    leftEdge(1, 0) => Slope(halfCols = -1, depth = 1)
+    leftEdge(4, 3) => Slope(halfCols = 5, depth = 4)
 
-fn cellEndSlope(col: Int, row: Int) -> Int
-    ? "End (right) slope of cell: (col + 1) * 1000 / row"
-    Result.withDefault(Int.div((col + 1) * 1000, row), 0)
+fn wholeQuadrant() -> Sector
+    ? "The quarter turn a quadrant covers: one column to each side per step ahead"
+    Sector(from = Slope(halfCols = -2, depth = 1), to = Slope(halfCols = 2, depth = 1))
 
-verify cellEndSlope
-    cellEndSlope(0, 1) => 1000
-    cellEndSlope(0, 2) => 500
-    cellEndSlope(1, 2) => 1000
+verify wholeQuadrant
+    centreInSector(3, -3, wholeQuadrant()) => true
+    centreInSector(3, 3, wholeQuadrant()) => true
 
-fn minCol(startSlope: Int, row: Int) -> Int
-    ? "Minimum column at this row for startSlope"
-    Int.div(startSlope * row + 500, 1000)
+fn side(halfCols: Int, depth: Int, slope: Slope) -> Int
+    ? "Where a point lies against a ray: negative to its left, zero on it, positive to its right."
+      "Compared by cross-multiplying, so nothing is divided or rounded."
+    halfCols * slope.depth - slope.halfCols * depth
 
-verify minCol
-    minCol(0, 1) => 0
-    minCol(500, 2) => 1
-    minCol(1000, 1) => 1
+verify side
+    side(0, 1, Slope(halfCols = 1, depth = 1)) => -1
+    side(3, 3, Slope(halfCols = 1, depth = 1)) => 0
+    side(2, 1, Slope(halfCols = 1, depth = 1)) => 1
 
-fn maxCol(endSlope: Int, row: Int) -> Int
-    ? "Maximum column at this row for endSlope"
-    Int.div(endSlope * row + 500, 1000)
+fn isOpen(sector: Sector) -> Bool
+    ? "True while the sector still has light in it: its left ray is left of its right ray"
+    side(sector.to.halfCols, sector.to.depth, sector.from) > 0
 
-verify maxCol
-    maxCol(1000, 1) => 1
-    maxCol(500, 2) => 1
-    maxCol(1000, 3) => 3
+verify isOpen
+    isOpen(wholeQuadrant()) => true
+    isOpen(Sector(from = leftEdge(2, 1), to = leftEdge(2, 1))) => false
+    isOpen(Sector(from = leftEdge(2, 1), to = leftEdge(2, 0))) => false
 
-fn wallFromFloorDeeper(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
-    ? "Handle transition from floor to wall: recurse deeper then continue row"
-    newEnd = cellStartSlope(col, row)
-    accWithPt = List.concat(acc, [Types.pt(cx, cy)])
-    deeper = scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, newEnd, accWithPt)
-    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, deeper)
+fn touchesSector(depth: Int, col: Int, sector: Sector) -> Bool
+    ? "True if any part of the tile's diamond is lit: the scan visits exactly these tiles"
+    centre = 2 * col
+    Bool.and(side(centre + 1, depth, sector.from) > 0, side(centre - 1, depth, sector.to) < 0)
 
-verify wallFromFloorDeeper
-    List.len(wallFromFloorDeeper([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, [], 0, 0)) => 1
+verify touchesSector
+    touchesSector(2, -2, wholeQuadrant()) => true
+    touchesSector(2, 2, wholeQuadrant()) => true
+    touchesSector(2, 0, Sector(from = leftEdge(2, 1), to = leftEdge(1, 1))) => false
+    touchesSector(2, 1, Sector(from = leftEdge(2, 1), to = leftEdge(1, 1))) => true
 
-fn floorFromWallResume(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
-    ? "Handle transition from wall to floor: update startSlope and continue"
-    newStart = cellEndSlope(col, row)
-    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, newStart, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
+fn centreInSector(depth: Int, col: Int, sector: Sector) -> Bool
+    ? "True if the tile's centre is lit: the test that makes sight between floor tiles mutual"
+    centre = 2 * col
+    Bool.and(side(centre, depth, sector.from) >= 0, side(centre, depth, sector.to) <= 0)
 
-verify floorFromWallResume
-    List.len(floorFromWallResume([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, [], 0, 0)) => 2
+verify centreInSector
+    centreInSector(2, 1, Sector(from = leftEdge(2, 1), to = leftEdge(1, 1))) => true
+    centreInSector(2, 0, Sector(from = leftEdge(2, 1), to = leftEdge(1, 1))) => false
+    centreInSector(4, 3, Sector(from = leftEdge(2, 1), to = leftEdge(1, 1))) => false
 
-fn scanRowWall(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
-    ? "Handle a wall cell during row scan"
-    match prevWall
-        true -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.concat(acc, [Types.pt(cx, cy)]))
-        false -> wallFromFloorDeeper(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
+fn towards(from: Int, to: Int) -> Int
+    ? "One step from `from` in the direction of `to`: -1, 0 or 1"
+    match from == to
+        true -> 0
+        false -> match from < to
+            true -> 1
+            false -> -1
 
-verify scanRowWall
-    List.len(scanRowWall([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, true, [], 0, 0)) => 1
-    List.len(scanRowWall([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
+verify towards
+    towards(3, 7) => 1
+    towards(7, 3) => -1
+    towards(4, 4) => 0
 
-fn scanRowFloor(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
-    ? "Handle a floor cell during row scan"
-    match prevWall
-        true -> floorFromWallResume(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
-        false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
+fn behindCrack(map: List<List<Tile>>, eye: Point, tile: Point) -> Bool
+    ? "True if the eye could reach the tile only between two walls that touch at a corner:"
+      "the tile is diagonal from the eye and both its neighbours on the eye's side are walls."
+    stepX = towards(tile.x, eye.x)
+    stepY = towards(tile.y, eye.y)
+    match stepX * stepY
+        0 -> false
+        _ -> Bool.and(isWall(map, tile.x + stepX, tile.y), isWall(map, tile.x, tile.y + stepY))
 
-verify scanRowFloor
-    List.len(scanRowFloor([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
-    List.len(scanRowFloor([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, true, [], 0, 0)) => 2
+verify behindCrack
+    behindCrack(sketch([".#", "#."]), Types.pt(0, 0), Types.pt(1, 1)) => true
+    behindCrack(sketch([".#", "#."]), Types.pt(1, 1), Types.pt(0, 0)) => true
+    behindCrack(sketch(["..", "#."]), Types.pt(0, 0), Types.pt(1, 1)) => false
+    behindCrack(sketch(["#.", "#."]), Types.pt(1, 0), Types.pt(1, 1)) => false
 
-fn scanRowCell(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
-    ? "Process one cell in the row: check wall or floor and delegate"
-    match isWall(map, cx, cy)
-        true -> scanRowWall(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc, cx, cy)
-        false -> scanRowFloor(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc, cx, cy)
+fn isSeen(view: View, depth: Int, col: Int, sector: Sector, wall: Bool, opaque: Bool) -> Bool
+    ? "True if the eye sees the tile: a wall when any part of it is lit, floor when its centre is."
+      "Floor behind a crack stops the light and stays dark."
+    match inRadius(depth, col, view.radius)
+        false -> false
+        true -> Bool.or(wall, Bool.and(Bool.not(opaque), centreInSector(depth, col, sector)))
 
-verify scanRowCell
-    List.len(scanRowCell([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
+verify isSeen
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 2, 0, wholeQuadrant(), true, true) => true
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 1, 0, wholeQuadrant(), false, false) => true
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 1, 0, wholeQuadrant(), false, true) => false
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 9, 0, wholeQuadrant(), true, true) => false
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 2, 1, Sector(from = leftEdge(1, 1), to = leftEdge(1, 2)), false, false) => true
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 2, 0, Sector(from = leftEdge(1, 1), to = leftEdge(1, 2)), false, false) => false
+    isSeen(viewOf(["@.#"], Types.pt(0, 0), 1), 2, 0, Sector(from = leftEdge(1, 1), to = leftEdge(1, 2)), true, true) => true
 
-fn scanRowInRadius(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>) -> List<Point>
-    ? "Process a cell that is within radius"
-    d = transformOctant(octant, row, col)
-    cx = ox + d.x
-    cy = oy + d.y
-    scanRowCell(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc, cx, cy)
+fn lit(seen: List<Point>, tile: Point, inSight: Bool) -> List<Point>
+    ? "The seen tiles, with this one added if it is in sight"
+    match inSight
+        true -> List.prepend(tile, seen)
+        false -> seen
 
-verify scanRowInRadius
-    List.len(scanRowInRadius([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [])) => 1
+verify lit
+    lit([], Types.pt(1, 0), true) => [Types.pt(1, 0)]
+    lit([], Types.pt(1, 0), false) => []
 
-fn scanRow(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>) -> List<Point>
-    ? "Scan cells in one row from col to maxC, accumulating visible points"
-    match col > maxC
-        true -> match prevWall
-            true -> acc
-            false -> scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, endSlope, acc)
-        false -> match inRadius(row, col, radius)
-            false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, prevWall, acc)
-            true -> scanRowInRadius(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc)
+fn passedOver(opaque: Bool) -> Passed
+    ? "What the scan remembers of the tile it has just passed"
+    match opaque
+        true -> Passed.Opaque
+        false -> Passed.Clear
+
+verify passedOver
+    passedOver(true) => Passed.Opaque
+    passedOver(false) => Passed.Clear
+
+fn afterTile(passed: Passed, opaque: Bool, depth: Int, col: Int, sector: Sector) -> Sector
+    ? "The sector for the rest of the row: light coming out from behind a wall starts at this tile's left edge"
+    match (passed, opaque)
+        (Passed.Opaque, false) -> Sector.update(sector, from = leftEdge(depth, col))
+        _ -> sector
+
+verify afterTile
+    afterTile(Passed.Opaque, false, 2, 1, wholeQuadrant()).from => leftEdge(2, 1)
+    afterTile(Passed.Clear, false, 2, 1, wholeQuadrant()) => wholeQuadrant()
+    afterTile(Passed.Nothing, false, 2, 1, wholeQuadrant()) => wholeQuadrant()
+    afterTile(Passed.Opaque, true, 2, 1, wholeQuadrant()) => wholeQuadrant()
+
+fn behindTile(view: View, passed: Passed, opaque: Bool, depth: Int, col: Int, sector: Sector, seen: List<Point>) -> List<Point>
+    ? "Where clear tiles end at a wall, the light that passed them goes on into the rows behind,"
+      "cut off at the wall's left edge"
+    match (passed, opaque)
+        (Passed.Clear, true) -> scanSector(view, depth + 1, Sector.update(sector, to = leftEdge(depth, col)), seen)
+        _ -> seen
+
+verify behindTile
+    behindTile(viewOf(["...", "...", "..."], Types.pt(0, 0), 2), Passed.Clear, true, 1, 1, wholeQuadrant(), []) => scanSector(viewOf(["...", "...", "..."], Types.pt(0, 0), 2), 2, Sector(from = wholeQuadrant().from, to = leftEdge(1, 1)), [])
+    behindTile(viewOf(["...", "...", "..."], Types.pt(0, 0), 2), Passed.Opaque, true, 1, 1, wholeQuadrant(), []) => []
+    behindTile(viewOf(["...", "...", "..."], Types.pt(0, 0), 2), Passed.Clear, false, 1, 1, wholeQuadrant(), []) => []
+
+fn scanTile(view: View, depth: Int, col: Int, sector: Sector, passed: Passed, seen: List<Point>) -> List<Point>
+    ? "Look at one lit tile, then go on along the row."
+      "Light ends at a wall, and at the floor behind a crack."
+    tile = quadrantTile(view, depth, col)
+    wall = isWall(view.map, tile.x, tile.y)
+    opaque = Bool.or(wall, behindCrack(view.map, view.eye, tile))
+    withTile = lit(seen, tile, isSeen(view, depth, col, sector, wall, opaque))
+    withBehind = behindTile(view, passed, opaque, depth, col, sector, withTile)
+    scanRow(view, depth, col + 1, afterTile(passed, opaque, depth, col, sector), passedOver(opaque), withBehind)
+
+verify scanTile
+    scanTile(viewOf(["@#."], Types.pt(0, 0), 1), 1, 0, wholeQuadrant(), Passed.Nothing, []) => [Types.pt(1, 1), Types.pt(1, 0)]
+
+fn endRow(view: View, depth: Int, sector: Sector, passed: Passed, seen: List<Point>) -> List<Point>
+    ? "A row that ends on clear tiles lets its light on into the next row; one that ends on a wall does not"
+    match passed
+        Passed.Clear -> scanSector(view, depth + 1, sector, seen)
+        _ -> seen
+
+verify endRow
+    endRow(viewOf(["@.."], Types.pt(0, 0), 1), 2, wholeQuadrant(), Passed.Clear, []) => scanSector(viewOf(["@.."], Types.pt(0, 0), 1), 3, wholeQuadrant(), [])
+    endRow(viewOf(["@.."], Types.pt(0, 0), 1), 2, wholeQuadrant(), Passed.Opaque, []) => []
+
+fn scanRow(view: View, depth: Int, col: Int, sector: Sector, passed: Passed, seen: List<Point>) -> List<Point>
+    ? "Walk one row from `col` rightwards, looking at the tiles the sector lights"
+    match col > depth
+        true -> endRow(view, depth, sector, passed, seen)
+        false -> match touchesSector(depth, col, sector)
+            true -> scanTile(view, depth, col, sector, passed, seen)
+            false -> scanRow(view, depth, col + 1, sector, passed, seen)
 
 verify scanRow
-    List.len(scanRow([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [])) => 1
+    List.len(scanRow(viewOf(["@.."], Types.pt(0, 0), 1), 1, -1, wholeQuadrant(), Passed.Nothing, [])) => 9
+    scanRow(viewOf(["@.."], Types.pt(0, 0), 1), 1, 2, wholeQuadrant(), Passed.Opaque, []) => []
 
-fn scanOctant(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, startSlope: Int, endSlope: Int, acc: List<Point>) -> List<Point>
-    ? "Recursively scan one octant row by row using shadowcasting"
-    match row > radius
-        true -> acc
-        false -> match startSlope >= endSlope
-            true -> acc
-            false -> scanRow(map, ox, oy, radius, octant, row, minCol(startSlope, row), maxCol(endSlope, row), startSlope, endSlope, false, acc)
+fn scanSector(view: View, depth: Int, sector: Sector, seen: List<Point>) -> List<Point>
+    ? "Light one sector of a quadrant, row by row away from the eye, until it is shut or out of range"
+    match Bool.and(depth <= view.radius, isOpen(sector))
+        true -> scanRow(view, depth, 0 - depth, sector, Passed.Nothing, seen)
+        false -> seen
 
-verify scanOctant
-    List.len(scanOctant([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 1000, [])) => 1
-    List.len(scanOctant([[Tile.Floor]], 0, 0, 1, 2, 2, 0, 1000, [])) => 0
+verify scanSector
+    scanSector(viewOf(["@.#."], Types.pt(0, 0), 1), 1, wholeQuadrant(), []) => [Types.pt(2, 1), Types.pt(2, 0), Types.pt(2, -1), Types.pt(1, 1), Types.pt(1, 0), Types.pt(1, -1)]
+    scanSector(viewOf(["@.#."], Types.pt(0, 0), 1), 9, wholeQuadrant(), []) => []
 
-fn scanAllOctants(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, acc: List<Point>) -> List<Point>
-    ? "Scan octants 0 through 7, accumulating visible points"
-    match octant > 7
-        true -> acc
-        false -> scanAllOctants(map, ox, oy, radius, octant + 1, scanOctant(map, ox, oy, radius, octant, 1, 0, 1000, acc))
+fn scanQuadrants(map: List<List<Tile>>, eye: Point, radius: Int, quadrant: Int, seen: List<Point>) -> List<Point>
+    ? "Light the four quadrants around the eye in turn"
+    match quadrant > 3
+        true -> seen
+        false -> scanQuadrants(map, eye, radius, quadrant + 1, scanSector(View(map = map, eye = eye, radius = radius, quadrant = quadrant), 1, wholeQuadrant(), seen))
 
-verify scanAllOctants
-    List.len(scanAllOctants([[Tile.Floor]], 0, 0, 0, 0, [])) => 0
+verify scanQuadrants
+    scanQuadrants(sketch(["@"]), Types.pt(0, 0), 0, 0, []) => []
+    List.len(scanQuadrants(sketch(["@"]), Types.pt(0, 0), 1, 0, [])) => 4
 
 fn dedup(pts: List<Point>, i: Int, acc: List<Point>) -> List<Point>
     ? "Remove duplicate points from the list"
@@ -225,8 +334,8 @@ verify dedupStep
     List.len(dedupStep([Types.pt(1, 1), Types.pt(2, 2)], 0, [], Types.pt(1, 1))) => 2
 
 fn computeFov(map: List<List<Tile>>, origin: Point, radius: Int) -> List<Point>
-    ? "Compute all visible points from origin within given radius using recursive shadowcasting"
-    raw = scanAllOctants(map, origin.x, origin.y, radius, 0, [Types.pt(origin.x, origin.y)])
+    ? "Compute all visible points from origin within given radius by symmetric shadowcasting"
+    raw = scanQuadrants(map, origin, radius, 0, [origin])
     dedup(raw, 0, [])
 
 verify computeFov
@@ -236,3 +345,143 @@ verify computeFov
     containsPt(computeFov([[Tile.Floor, Tile.Wall, Tile.Floor]], Types.pt(0, 0), 2), Types.pt(0, 0), 0) => true
     containsPt(computeFov([[Tile.Floor, Tile.Wall, Tile.Floor]], Types.pt(0, 0), 2), Types.pt(1, 0), 0) => true
     containsPt(computeFov([[Tile.Floor, Tile.Wall, Tile.Floor]], Types.pt(0, 0), 2), Types.pt(2, 0), 0) => false
+
+fn sketchTile(glyph: String) -> Tile
+    ? "Tile for one character of a sketch: `#` is a wall, anything else is floor"
+    match glyph
+        "#" -> Tile.Wall
+        _ -> Tile.Floor
+
+verify sketchTile
+    sketchTile("#") => Tile.Wall
+    sketchTile(".") => Tile.Floor
+    sketchTile("@") => Tile.Floor
+
+fn sketchRow(glyphs: List<String>, tiles: List<Tile>) -> List<Tile>
+    ? "Tiles for one line of a sketch, after the tiles already read"
+    match glyphs
+        [] -> List.reverse(tiles)
+        [glyph, ..rest] -> sketchRow(rest, List.prepend(sketchTile(glyph), tiles))
+
+verify sketchRow
+    sketchRow([], []) => []
+    sketchRow(["#", "."], []) => [Tile.Wall, Tile.Floor]
+
+fn sketchRows(rows: List<String>, map: List<List<Tile>>) -> List<List<Tile>>
+    ? "Tiles for the lines of a sketch, after the lines already read"
+    match rows
+        [] -> List.reverse(map)
+        [row, ..rest] -> sketchRows(rest, List.prepend(sketchRow(String.chars(row), []), map))
+
+verify sketchRows
+    sketchRows([], []) => []
+    sketchRows(["#.", ".#"], []) => [[Tile.Wall, Tile.Floor], [Tile.Floor, Tile.Wall]]
+
+fn sketch(rows: List<String>) -> List<List<Tile>>
+    ? "A map drawn as text, so that a verify case shows the place it is about"
+    sketchRows(rows, [])
+
+verify sketch
+    sketch(["#.", ".#"]) => [[Tile.Wall, Tile.Floor], [Tile.Floor, Tile.Wall]]
+
+fn viewOf(rows: List<String>, eye: Point, quadrant: Int) -> View
+    ? "A view of a sketched map, eight tiles far, for verify cases"
+    View(map = sketch(rows), eye = eye, radius = 8, quadrant = quadrant)
+
+verify viewOf
+    viewOf(["#"], Types.pt(0, 0), 2).quadrant => 2
+
+fn eyeOf(rows: List<String>, y: Int) -> Point
+    ? "Where the `@` stands in a sketch, searching from line `y`"
+    match rows
+        [] -> Types.pt(-1, -1)
+        [row, ..rest] -> eyeInRow(String.chars(row), 0, y, rest)
+
+verify eyeOf
+    eyeOf([], 0) => Types.pt(-1, -1)
+    eyeOf(["...", ".@."], 0) => Types.pt(1, 1)
+    eyeOf(["..."], 0) => Types.pt(-1, -1)
+
+fn eyeInRow(glyphs: List<String>, x: Int, y: Int, below: List<String>) -> Point
+    ? "Where the `@` stands in one line of a sketch, or in the lines below it"
+    match glyphs
+        [] -> eyeOf(below, y + 1)
+        ["@", ..rest] -> Types.pt(x, y)
+        [glyph, ..rest] -> eyeInRow(rest, x + 1, y, below)
+
+verify eyeInRow
+    eyeInRow([], 0, 3, []) => Types.pt(-1, -1)
+    eyeInRow(["#", "@"], 0, 3, []) => Types.pt(1, 3)
+
+fn shownGlyph(glyph: String, seen: Bool) -> String
+    ? "A seen tile as drawn, an unseen one as a blank"
+    match seen
+        true -> glyph
+        false -> " "
+
+verify shownGlyph
+    shownGlyph("#", true) => "#"
+    shownGlyph("#", false) => " "
+
+fn shownRow(glyphs: List<String>, x: Int, y: Int, seen: List<Point>, shown: String) -> String
+    ? "One line of a sketch with the unseen tiles blanked, after the part already shown"
+    match glyphs
+        [] -> shown
+        [glyph, ..rest] -> shownRow(rest, x + 1, y, seen, shown + shownGlyph(glyph, containsPt(seen, Types.pt(x, y), 0)))
+
+verify shownRow
+    shownRow([], 0, 0, [], "") => ""
+    shownRow(["#", ".", "#"], 0, 0, [Types.pt(0, 0), Types.pt(1, 0)], "") => "#. "
+
+fn shownRows(rows: List<String>, y: Int, seen: List<Point>, shown: List<String>) -> List<String>
+    ? "The lines of a sketch from line `y` with the unseen tiles blanked, after the lines already shown"
+    match rows
+        [] -> List.reverse(shown)
+        [row, ..rest] -> shownRows(rest, y + 1, seen, List.prepend(shownRow(String.chars(row), 0, y, seen, ""), shown))
+
+verify shownRows
+    shownRows([], 0, [], []) => []
+    shownRows(["#.", ".#"], 0, [Types.pt(1, 0), Types.pt(0, 1)], []) => [" .", ". "]
+
+fn look(rows: List<String>) -> List<String>
+    ? "What the `@` in a sketch sees, eight tiles far: the sketch with everything unseen blanked"
+    shownRows(rows, 0, computeFov(sketch(rows), eyeOf(rows, 0), 8), [])
+
+verify look
+    look(["#########", "#...#...#", "#..@#...#", "#####...#", "#.......#", "#########"]) => ["#####    ", "#...#    ", "#..@#    ", "#####    ", "         ", "         "]
+    look(["###########", "#.........#", "#....#....#", "#....@....#", "#.........#", "###########"]) => ["####   ####", "#.... ....#", "#....#....#", "#....@....#", "#.........#", "###########"]
+    look(["###############", "#######@#######", "#######.#######", "#.............#", "#.............#", "###############"]) => ["      ###      ", "      #@#      ", "      #.#      ", "      ...      ", "      ...      ", "     #####     "]
+    look(["###############", "#######.#######", "#######.#######", "#.............#", "#..@..........#", "###############"]) => ["               ", "               ", "#######.###    ", "#..........    ", "#..@........   ", "###########    "]
+    look(["#######", "#.@#..#", "#.#...#", "#.....#", "#######"]) => ["####   ", "#.@#   ", "#.#    ", "#.     ", "#      "]
+
+fn sees(rows: List<String>, ax: Int, ay: Int, bx: Int, by: Int) -> Bool
+    ? "True if an eye at (ax, ay) in a sketch sees the tile at (bx, by)"
+    containsPt(computeFov(sketch(rows), Types.pt(ax, ay), 8), Types.pt(bx, by), 0)
+
+verify sees
+    sees(["..#.."], 0, 0, 1, 0) => true
+    sees(["..#.."], 0, 0, 2, 0) => true
+    sees(["..#.."], 0, 0, 3, 0) => false
+
+verify sees law mutual
+    given ax: Int = 1..7
+    given ay: Int = 1..5
+    given bx: Int = 1..7
+    given by: Int = 1..5
+    when Bool.and(isFloorAt(pillars(), ax, ay), isFloorAt(pillars(), bx, by))
+    sees(pillars(), ax, ay, bx, by) => sees(pillars(), bx, by, ax, ay)
+
+fn pillars() -> List<String>
+    ? "A hall with pillars, a crack and a doorway: every shape of shadow in a small place"
+    ["#########", "#.......#", "#..#..#.#", "#.#...#.#", "#....#..#", "#.#.....#", "#########"]
+
+verify pillars
+    List.len(pillars()) => 7
+
+fn isFloorAt(rows: List<String>, x: Int, y: Int) -> Bool
+    ? "True if the sketch has floor at (x, y)"
+    Bool.not(isWall(sketch(rows), x, y))
+
+verify isFloorAt
+    isFloorAt(pillars(), 1, 1) => true
+    isFloorAt(pillars(), 0, 0) => false
