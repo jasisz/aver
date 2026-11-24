@@ -1,12 +1,12 @@
 //! The job engine: pure work a program starts off the turn.
 //!
 //! A job is the only resource the concurrency work adds. `begin` hands the
-//! engine a body and gets a handle back at once; the body runs on its own
-//! thread and writes its answer into the job table; `take` collects it in a
-//! later turn; `cancel` stops it at the body's next cancellation check. The
-//! engine deliberately knows nothing about Aver: a body is a closure and an
-//! answer is a [`ProviderValue`], so the same table serves the bytecode VM,
-//! a generated artifact and the Wasmtime host.
+//! engine a body and gets a handle back at once; the body runs on one of
+//! the engine's workers and writes its answer into the job table; `take`
+//! collects it in a later turn; `cancel` stops it at the body's next
+//! cancellation check. The engine deliberately knows nothing about Aver: a
+//! body is a closure and an answer is a [`ProviderValue`], so the same table
+//! serves the bytecode VM, a generated artifact and the Wasmtime host.
 //!
 //! The limit is how much of the host a program uses, not something the
 //! program observes. While fewer than `limit` bodies run, a begun job starts
@@ -15,6 +15,15 @@
 //! at the limit, so the same program gives the same answers on a host with
 //! one core and on a host with sixty-four, and a recording made on either
 //! replays on the other.
+//!
+//! The bodies run on at most `limit` workers: threads of the engine that
+//! stay after a body, waiting for the next one, rather than a thread started
+//! and ended for every job. What a thread keeps for itself between the
+//! bodies it runs — the equality classes of `eq_classes`, the allocator's
+//! pages — outlives one job, as it does on `main`; what a program could see
+//! does not, since each body runs as if on a thread of its own
+//! ([`crate::as_own_thread`]). A body that unwinds ends its worker, as it
+//! ended its thread before.
 //!
 //! The elements of independent products run here too, as tasks on workers
 //! that stay between tasks ([`scope`], in `tasks`). They are kept apart from
@@ -74,7 +83,7 @@ struct JobSlot {
     state: JobState,
 }
 
-/// One queued job leaving the admission queue for a thread of its own.
+/// One queued job leaving the admission queue for a worker.
 struct Start {
     id: u64,
     cancel: Arc<AtomicBool>,
@@ -145,6 +154,69 @@ pub struct JobEngine {
     table: Mutex<JobTable>,
     settled: Condvar,
     wakers: Mutex<Vec<Arc<dyn CompletionWaker>>>,
+    workers: Arc<Workers>,
+}
+
+/// The engine's workers and the admitted jobs none of them has taken yet.
+/// Kept apart from the engine because a worker outlives its last body: it
+/// holds this, and only a `Weak` back to the engine.
+#[derive(Default)]
+struct Workers {
+    state: Mutex<WorkersState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct WorkersState {
+    /// Admitted jobs no worker has taken yet, oldest first.
+    ready: VecDeque<Start>,
+    /// Workers alive, at most the engine's limit.
+    alive: usize,
+    /// Of those, how many are running a body.
+    busy: usize,
+    /// Workers waiting for a job.
+    waiting: usize,
+    /// Of those, how many have been told to take one and have not yet.
+    told: usize,
+    /// The engine is gone: a waiting worker ends.
+    closed: bool,
+}
+
+impl Workers {
+    fn state(&self) -> std::sync::MutexGuard<'_, WorkersState> {
+        // No body runs while the lock is held, so nothing can poison it;
+        // recover it anyway rather than strand the jobs.
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The next admitted job for a worker that has just finished one (or
+    /// started), waiting for it; `None` once the engine is gone.
+    fn next(&self) -> Option<Start> {
+        let mut state = self.state();
+        loop {
+            if let Some(start) = state.ready.pop_front() {
+                state.busy += 1;
+                return Some(start);
+            }
+            if state.closed {
+                state.alive -= 1;
+                return None;
+            }
+            state.waiting += 1;
+            while state.told == 0 && !state.closed {
+                state = self
+                    .wake
+                    .wait(state)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+            state.waiting -= 1;
+            if state.told > 0 {
+                state.told -= 1;
+            }
+        }
+    }
 }
 
 /// A job handle, as the capability boundary carries it.
@@ -214,6 +286,7 @@ impl JobEngine {
             table: Mutex::new(JobTable::default()),
             settled: Condvar::new(),
             wakers: Mutex::new(Vec::new()),
+            workers: Arc::new(Workers::default()),
         })
     }
 
@@ -282,38 +355,57 @@ impl JobEngine {
         })
     }
 
-    /// Give every admitted job its thread. A thread the host cannot start
-    /// settles that job with the reason, which frees its place for the next
-    /// queued one.
-    fn launch(self: &Arc<Self>, mut starts: Vec<Start>) {
-        while let Some(Start { id, cancel, body }) = starts.pop() {
-            let engine = Arc::downgrade(self);
-            let spawned = std::thread::Builder::new()
-                .name(format!("aver-job-{id}"))
-                .stack_size(crate::THREAD_STACK_BYTES)
-                .spawn(move || {
-                    // A body that unwinds must still settle its slot:
-                    // otherwise the job stays Running for ever, the limit
-                    // keeps counting it and every `take` answers `Ok(None)`
-                    // with nothing left to produce an answer.
-                    let outcome =
-                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            body(cancel)
-                        })) {
-                            Ok(outcome) => outcome,
-                            Err(_) => Err("work: the job's body stopped unexpectedly".to_string()),
-                        };
-                    if let Some(engine) = engine.upgrade() {
-                        engine.settle(id, outcome);
+    /// Hand every admitted job to a worker: one waiting, one that has just
+    /// finished a body and looks for the next job, or a new one while fewer
+    /// than `limit` are alive. Otherwise every worker is running a body, and
+    /// the first to finish takes it. When the host cannot start a worker and
+    /// none is alive, the job settles with the reason, which frees its place
+    /// for the next queued one.
+    fn launch(self: &Arc<Self>, starts: Vec<Start>) {
+        let mut starts = VecDeque::from(starts);
+        while !starts.is_empty() {
+            let mut state = self.workers.state();
+            let mut spawn = 0;
+            for start in starts.drain(..) {
+                state.ready.push_back(start);
+                if state.waiting > state.told {
+                    state.told += 1;
+                    self.workers.wake.notify_one();
+                } else if state.ready.len() > state.alive - state.busy && state.alive < self.limit {
+                    state.alive += 1;
+                    spawn += 1;
+                }
+            }
+            drop(state);
+            for _ in 0..spawn {
+                if let Err(error) = self.spawn_worker() {
+                    let mut state = self.workers.state();
+                    state.alive -= 1;
+                    if state.alive > 0 {
+                        continue;
                     }
-                });
-            if let Err(error) = spawned {
-                starts.extend(self.finish(
-                    id,
-                    Err(format!("work: the host could not start a job: {error}")),
-                ));
+                    let stranded: Vec<Start> = state.ready.drain(..).collect();
+                    drop(state);
+                    for Start { id, .. } in stranded {
+                        starts.extend(self.finish(
+                            id,
+                            Err(format!("work: the host could not start a job: {error}")),
+                        ));
+                    }
+                    break;
+                }
             }
         }
+    }
+
+    fn spawn_worker(self: &Arc<Self>) -> std::io::Result<()> {
+        let engine = Arc::downgrade(self);
+        let workers = self.workers.clone();
+        std::thread::Builder::new()
+            .name("aver-job".to_string())
+            .stack_size(crate::THREAD_STACK_BYTES)
+            .spawn(move || work(&engine, &workers))
+            .map(drop)
     }
 
     fn settle(self: &Arc<Self>, id: u64, outcome: JobOutcome) {
@@ -565,6 +657,48 @@ impl Drop for JobEngine {
             for slot in table.jobs.values_mut() {
                 slot.cancel.store(true, Ordering::Relaxed);
             }
+        }
+        // And the waiting workers to end: no job will come for them.
+        let mut state = self.workers.state();
+        state.closed = true;
+        let dropped = std::mem::take(&mut state.ready);
+        drop(state);
+        self.workers.wake.notify_all();
+        drop(dropped);
+    }
+}
+
+/// A worker: runs the engine's admitted jobs one after another, each as if
+/// on a thread of its own, and waits for the next while there is none.
+/// It ends when the engine is gone, or after a body that unwound: a thread
+/// a body left mid-way is not trusted with the next one, and the job the
+/// engine admits in its place gets a new worker.
+fn work(engine: &std::sync::Weak<JobEngine>, workers: &Workers) {
+    while let Some(Start { id, cancel, body }) = workers.next() {
+        // A body that unwinds must still settle its slot: otherwise the job
+        // stays Running for ever, the limit keeps counting it and every
+        // `take` answers `Ok(None)` with nothing left to produce an answer.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::as_own_thread(|| body(cancel))
+        }));
+        let unwound = outcome.is_err();
+        let outcome = outcome
+            .unwrap_or_else(|_| Err("work: the job's body stopped unexpectedly".to_string()));
+        {
+            // Free before settling, so the job admitted in this one's place
+            // finds this worker about to look for it, or, when it leaves, a
+            // free place for a new one.
+            let mut state = workers.state();
+            state.busy -= 1;
+            if unwound {
+                state.alive -= 1;
+            }
+        }
+        if let Some(engine) = engine.upgrade() {
+            engine.settle(id, outcome);
+        }
+        if unwound {
+            return;
         }
     }
 }
@@ -855,5 +989,113 @@ mod tests {
         engine.wait_until(generation, Instant::now() + Duration::from_secs(5));
         settled(&engine, job.id());
         assert!(job.is_ready());
+    }
+
+    /// The thread a job runs on, by an id the test gives it.
+    fn thread_of_job(engine: &Arc<JobEngine>) -> std::thread::ThreadId {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let job = engine
+            .begin(Box::new(move |_| {
+                sender.send(std::thread::current().id()).expect("send");
+                Ok(value(0))
+            }))
+            .expect("begin");
+        settled(engine, job.id());
+        assert!(matches!(job.take(), Ok(Some(_))));
+        receiver.recv().expect("the job ran")
+    }
+
+    /// Jobs one after another run on one worker, and what that thread keeps
+    /// for itself (here a thread local) is still there for the next job.
+    #[test]
+    fn jobs_one_after_another_share_a_worker() {
+        thread_local! {
+            static SEEN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        let engine = JobEngine::new(4);
+        let first = thread_of_job(&engine);
+        for _ in 0..16 {
+            assert_eq!(thread_of_job(&engine), first);
+        }
+        let counts: Vec<u32> = (0..3)
+            .map(|_| {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let job = engine
+                    .begin(Box::new(move |_| {
+                        let seen = SEEN.with(|seen| {
+                            seen.set(seen.get() + 1);
+                            seen.get()
+                        });
+                        sender.send(seen).expect("send");
+                        Ok(value(0))
+                    }))
+                    .expect("begin");
+                settled(&engine, job.id());
+                receiver.recv().expect("the job ran")
+            })
+            .collect();
+        assert_eq!(counts, vec![1, 2, 3]);
+    }
+
+    /// However many jobs are begun, no more workers are alive than the
+    /// limit, and every job is answered.
+    #[test]
+    fn workers_never_outnumber_the_limit() {
+        let engine = JobEngine::new(3);
+        let threads = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let jobs: Vec<Job> = (0..64)
+            .map(|n| {
+                let threads = threads.clone();
+                engine
+                    .begin(Box::new(move |_| {
+                        threads
+                            .lock()
+                            .expect("threads")
+                            .insert(std::thread::current().id());
+                        Ok(value(n))
+                    }))
+                    .expect("begin")
+            })
+            .collect();
+        for (n, job) in jobs.iter().enumerate() {
+            settled(&engine, job.id());
+            assert!(
+                matches!(job.take(), Ok(Some(ProviderValue::Int(v))) if v.to_i64() == Some(n as i64))
+            );
+        }
+        let seen = threads.lock().expect("threads").len();
+        assert!(seen <= 3, "{seen} threads ran jobs under a limit of 3");
+        assert!(engine.workers.state().alive <= 3);
+    }
+
+    /// A body that unwinds ends its worker; the next job runs on a new one.
+    #[test]
+    fn a_body_that_unwinds_ends_its_worker() {
+        let engine = JobEngine::new(1);
+        let before = thread_of_job(&engine);
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let job = engine
+            .begin(Box::new(|_| panic!("the body of a job gave up")))
+            .expect("begin");
+        settled(&engine, job.id());
+        std::panic::set_hook(hook);
+        assert!(job.take().is_err());
+        assert_ne!(thread_of_job(&engine), before);
+        assert_eq!(engine.workers.state().alive, 1);
+    }
+
+    /// A worker waiting for a job ends once its engine is gone.
+    #[test]
+    fn waiting_workers_end_with_their_engine() {
+        let engine = JobEngine::new(2);
+        thread_of_job(&engine);
+        let workers = engine.workers.clone();
+        drop(engine);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while workers.state().alive > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(workers.state().alive, 0);
     }
 }
