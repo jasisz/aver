@@ -1,0 +1,60 @@
+module Main
+    depends [Jobs, Mixer, Node, Wait, Work, Words]
+    intent = "Starts mixing jobs whose tasks and answers hold machine-word refinements at the ends of their ranges, and prints each report."
+    exposes [main]
+    effects [Console.print, Mixer.begin, Mixer.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Begins three mixing jobs and prints each report as it lands."
+    ! [Console.print, Mixer.begin, Mixer.take, Wait.poll]
+    top = Words.wordOf(4611686018427387903)
+    zero = Words.wordOf(0)
+    mid = Words.wordOf(123456789012)
+    up = Words.stepOf(1000)
+    down = Words.stepOf(-1000)
+    still = Words.stepOf(0)
+    first = Mixer.begin(Jobs.Task(seed = top, step = up, words = [zero, mid]))?
+    second = Mixer.begin(Jobs.Task(seed = zero, step = down, words = [top]))?
+    third = Mixer.begin(Jobs.Task(seed = mid, step = still, words = []))?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(first), 2 => Wait.Item.Job(second), 3 => Wait.Item.Job(third)}
+    collect(pending, 50)
+
+fn collect(pending: Map<Int, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "One turn per call: wait once, collect whatever is ready, and stop when the wait set is empty."
+    ! [Console.print, Mixer.take, Wait.poll]
+    match Map.len(pending) == 0
+        true -> Result.Ok(Unit)
+        false -> match turns < 1
+            true -> Result.Err("work: the jobs did not finish within the turns allowed")
+            false -> turn(pending, turns)
+
+fn turn(pending: Map<Int, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "The body of one turn: the one wait, then the keys it reported."
+    ! [Console.print, Mixer.take, Wait.poll]
+    ready = Wait.poll(pending, 200)?
+    remaining = harvest(pending, ready)?
+    collect(remaining, turns - 1)
+
+fn harvest(pending: Map<Int, Wait.Item>, ready: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "Takes every key the wait reported, printing each report, and answers with the keys still running."
+    ! [Console.print, Mixer.take]
+    match ready
+        [] -> Result.Ok(pending)
+        [key, ..rest] -> match Map.get(pending, key)
+            Option.None -> harvest(pending, rest)
+            Option.Some(item) -> harvestItem(pending, key, item, rest)
+
+fn harvestItem(pending: Map<Int, Wait.Item>, key: Int, item: Wait.Item, rest: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "One reported key: a job that finished is printed and dropped, a job still running stays in the wait set."
+    ! [Console.print, Mixer.take]
+    match item
+        Wait.Item.Socket(_socket) -> harvest(pending, rest)
+        Wait.Item.Job(job) -> match Mixer.take(job)?
+            Option.None -> harvest(pending, rest)
+            Option.Some(report) -> mixed(pending, key, report, rest)
+
+fn mixed(pending: Map<Int, Wait.Item>, key: Int, report: Jobs.Report, rest: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "Says what one job mixed and drops its key from the wait set."
+    ! [Console.print, Mixer.take]
+    Console.print("job {key} mixed {report.count} words to {Words.wordValue(report.word)} by {Words.stepValue(report.step)}")
+    harvest(Map.remove(pending, key), rest)

@@ -1251,6 +1251,124 @@ fn a_recording_naming_a_foreign_record_type_is_a_diagnostic_on_the_rust_backend(
 }
 
 /// The one recording `aver run --record` wrote into `dir`.
+/// A job kind's task and answer are values of the program itself: they
+/// reach a host only through their codecs. So refinements they hold, owned
+/// by another module, stay machine integers (`Words.Word` an `i64`,
+/// `Words.Step` an `i16`), and the codecs carry them as the `Int` they are,
+/// at the ends of their ranges too. The binary prints what the VM prints,
+/// and a recording it makes, which goes through those codecs, replays on
+/// the VM; a recording holding a value outside a refinement's range is
+/// refused rather than stored in the narrow field.
+#[test]
+fn job_boundary_refinements_stay_machine_integers() {
+    let name = "work_jobs_carrier";
+    let ws = temp_dir("carrier");
+    let project = ws.join("project");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&project).expect("create project dir");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+
+    let result = (|| -> Result<(), String> {
+        let vm = run_vm(name)?;
+        let dir = fixture(name);
+        let out = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .arg("compile")
+            .arg(dir.join("main.av"))
+            .arg("--target")
+            .arg("rust")
+            .arg("--name")
+            .arg(name)
+            .arg("-o")
+            .arg(&project)
+            .arg("--module-root")
+            .arg(&dir)
+            .arg("--with-replay")
+            .output()
+            .expect("expected `aver compile --target rust` to spawn");
+        if !out.status.success() {
+            return Err(format!("aver compile failed:\n{}", format_output(&out)));
+        }
+        let notes = String::from_utf8_lossy(&out.stdout);
+        if notes.contains("keeps an `Int` field") {
+            return Err(format!(
+                "a job boundary refinement kept its Int field:\n{notes}"
+            ));
+        }
+        let words = fs::read_to_string(project.join("src/aver_generated/words/mod.rs"))
+            .map_err(|error| format!("no module Words emitted: {error}"))?;
+        for field in [
+            "pub struct Word {\n    pub value: i64,",
+            "pub struct Step {\n    pub value: i16,",
+        ] {
+            if !words.contains(field) {
+                return Err(format!("expected `{field}` in the emitted Words:\n{words}"));
+            }
+        }
+
+        let bin = cargo_build(&project, name)?;
+        same_lines(name, &vm, &run_binary(&bin)?)?;
+
+        let session = recordings.join("session.json");
+        let recorded = Command::new(&bin)
+            .env("AVER_REPLAY_RECORD", &session)
+            .output()
+            .map_err(|error| format!("failed to run the recording binary: {error}"))?;
+        if !recorded.status.success() {
+            return Err(format!(
+                "the Rust binary could not record its run:\n{}",
+                format_output(&recorded)
+            ));
+        }
+        same_lines(name, &vm, String::from_utf8_lossy(&recorded.stdout).trim())?;
+        let replayed = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .arg("replay")
+            .arg(&recordings)
+            .arg("--test")
+            .output()
+            .expect("expected `aver replay` to execute");
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&replayed.stdout),
+            String::from_utf8_lossy(&replayed.stderr)
+        );
+        if !replayed.status.success() || !report.contains("Output:  MATCH") {
+            return Err(format!(
+                "the VM could not replay the Rust binary's recording:\n{}",
+                format_output(&replayed)
+            ));
+        }
+
+        let text = fs::read_to_string(&session)
+            .map_err(|error| format!("the Rust binary wrote no recording: {error}"))?;
+        for (inside, outside) in [
+            ("4611686018427387903", "4611686018427387904"),
+            ("\"value\": -1000", "\"value\": -1001"),
+        ] {
+            if !text.contains(inside) {
+                return Err(format!("the recording holds no {inside}:\n{text}"));
+            }
+            let tampered = ws.join("tampered.json");
+            fs::write(&tampered, text.replace(inside, outside)).expect("write tampered recording");
+            let refused = Command::new(&bin)
+                .env("AVER_REPLAY_REPLAY", &tampered)
+                .output()
+                .map_err(|error| format!("failed to run the replaying binary: {error}"))?;
+            let said = format_output(&refused);
+            if refused.status.success() || !said.contains("is out of its range") {
+                return Err(format!(
+                    "a recording with {outside} in place of {inside} was not refused:\n{said}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 fn one_recording(dir: &Path) -> Result<PathBuf, String> {
     let mut sessions = fs::read_dir(dir)
         .map_err(|error| format!("cannot read the recordings directory: {error}"))?

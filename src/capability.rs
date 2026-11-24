@@ -342,6 +342,11 @@ pub struct CapabilityRegistry {
     resource_tainted_types: BTreeSet<String>,
     /// Capability-owned represented boundary types, keyed canonically.
     boundary_types: BTreeMap<String, TypeDef>,
+    /// The boundary types a host may answer with its own Rust value: those
+    /// of every capability but a job kind. A job kind's task and answer are
+    /// values of the program itself, so they cross to the host only through
+    /// their codecs (a recording, an explicit host binding, wasm).
+    host_boundary_types: BTreeSet<String>,
     /// `(operation identity, explicit profile references)` observed in verify
     /// laws across the entry module and dependency closure. Kept separately
     /// from the contract so proof reports can distinguish model-local hostile
@@ -404,6 +409,12 @@ impl CapabilityRegistry {
 
     pub fn boundary_types(&self) -> impl Iterator<Item = (&String, &TypeDef)> {
         self.boundary_types.iter()
+    }
+
+    /// Whether `canonical_name` is a boundary type of a capability other than
+    /// a job kind (see `host_boundary_types`).
+    pub fn is_host_boundary_type(&self, canonical_name: &str) -> bool {
+        self.host_boundary_types.contains(canonical_name)
     }
 
     pub fn profile_source_counts(&self, canonical_name: &str) -> (usize, usize) {
@@ -489,6 +500,7 @@ impl CapabilityRegistry {
         self.resource_tainted_types
             .extend(other.resource_tainted_types);
         self.boundary_types.extend(other.boundary_types);
+        self.host_boundary_types.extend(other.host_boundary_types);
         self.profile_givens.extend(other.profile_givens);
     }
 
@@ -748,9 +760,11 @@ impl CapabilityRegistry {
                 .insert(format!("{scope}.{name}"));
         }
         for (name, type_def) in type_defs {
-            registry
-                .boundary_types
-                .insert(format!("{scope}.{name}"), type_def.clone());
+            let canonical = format!("{scope}.{name}");
+            if !is_job_kind {
+                registry.host_boundary_types.insert(canonical.clone());
+            }
+            registry.boundary_types.insert(canonical, type_def.clone());
         }
         // A dependency layout the contract binds is a boundary type like any
         // other: the VM's value conversion, the wasm-gc plan and the Rust

@@ -1,0 +1,53 @@
+module Words
+    intent = "Two refinements over Int that compiled Aver holds as machine integers: a word below 2^62 and a signed step."
+    exposes [wordOf, stepOf, wordValue, stepValue, mixed]
+    exposes opaque [Word, Step]
+    depends []
+    effects []
+
+record Word
+    value: Int
+
+record Step
+    value: Int
+
+fn wordOf(n: Int) -> Result<Word, String>
+    ? "A word: at least 0 and at most 2^62 - 1."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn stepOf(n: Int) -> Result<Step, String>
+    ? "A step: between -1000 and 1000."
+    match Bool.and(n >= -1000, n <= 1000)
+        true -> Result.Ok(Step(value = n))
+        false -> Result.Err("step out of range")
+
+fn wordValue(w: Word) -> Int
+    ? "The Int a word is."
+    w.value
+
+fn stepValue(s: Step) -> Int
+    ? "The Int a step is."
+    s.value
+
+fn mixed(w: Word, s: Step) -> Word
+    ? "The word moved by the step, wrapped around the word's range."
+    match wordOf(w.value + s.value)
+        Result.Ok(m) -> m
+        Result.Err(_) -> match s.value < 0
+            true -> Word(value = 4611686018427387903)
+            false -> Word(value = 0)
+
+verify wordOf
+    wordOf(0) => Word(value = 0)
+    wordOf(-1) => Result.Err("word out of range")
+
+verify stepOf
+    stepOf(-1000) => Step(value = -1000)
+    stepOf(1001) => Result.Err("step out of range")
+
+verify mixed
+    mixed(Word(value = 4611686018427387903), Step(value = 1)) => Word(value = 0)
+    mixed(Word(value = 0), Step(value = -1)) => Word(value = 4611686018427387903)
+    mixed(Word(value = 5), Step(value = 2)) => Word(value = 7)
