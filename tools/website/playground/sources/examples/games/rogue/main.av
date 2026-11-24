@@ -322,7 +322,7 @@ fn updateFov(state: GameState) -> GameState
     GameState.update(state, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem)
 
 verify updateFov
-    updateFov(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false)).visible => Fov.computeFov(Map.generateMap(42), Types.pt(10, 10), 8)
+    updateFov(GameState(gameMap = Map.setT(Map.emptyMap(), 10, 10, Tile.Floor), player = Types.makePlayer(10, 10), entities = [], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false)).visible => Fov.computeFov(Map.setT(Map.emptyMap(), 10, 10, Tile.Floor), Types.pt(10, 10), 8)
 
 fn tryMove(state: GameState, dx: Int, dy: Int) -> GameState
     ? "Try to move player by delta, handle combat and items"
