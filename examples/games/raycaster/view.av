@@ -280,36 +280,36 @@ verify runsWidth
 fn spriteHeight(kind: EnemyKind) -> Float
     ? "Height of an enemy in map units; a wall is 1 high"
     match kind
-        EnemyKind.Imp -> 0.7
-        EnemyKind.Demon -> 0.95
-        EnemyKind.Ghost -> 0.6
+        EnemyKind.Crawler -> 0.7
+        EnemyKind.Brute -> 0.95
+        EnemyKind.Wisp -> 0.6
 
 verify spriteHeight
-    spriteHeight(EnemyKind.Imp) => 0.7
-    spriteHeight(EnemyKind.Demon) => 0.95
-    spriteHeight(EnemyKind.Ghost) => 0.6
+    spriteHeight(EnemyKind.Crawler) => 0.7
+    spriteHeight(EnemyKind.Brute) => 0.95
+    spriteHeight(EnemyKind.Wisp) => 0.6
 
 fn spriteAspect(kind: EnemyKind) -> Float
     ? "Width of an enemy as a share of its height"
     match kind
-        EnemyKind.Imp -> 0.8
-        EnemyKind.Demon -> 0.95
-        EnemyKind.Ghost -> 1.0
+        EnemyKind.Crawler -> 0.8
+        EnemyKind.Brute -> 0.95
+        EnemyKind.Wisp -> 1.0
 
 verify spriteAspect
-    spriteAspect(EnemyKind.Imp) => 0.8
-    spriteAspect(EnemyKind.Demon) => 0.95
-    spriteAspect(EnemyKind.Ghost) => 1.0
+    spriteAspect(EnemyKind.Crawler) => 0.8
+    spriteAspect(EnemyKind.Brute) => 0.95
+    spriteAspect(EnemyKind.Wisp) => 1.0
 
 fn spriteLift(kind: EnemyKind) -> Float
-    ? "How high above the floor an enemy's feet are: the ghost floats"
+    ? "How high above the floor an enemy's feet are: the wisp floats"
     match kind
-        EnemyKind.Ghost -> 0.25
+        EnemyKind.Wisp -> 0.25
         _ -> 0.0
 
 verify spriteLift
-    spriteLift(EnemyKind.Ghost) => 0.25
-    spriteLift(EnemyKind.Imp) => 0.0
+    spriteLift(EnemyKind.Wisp) => 0.25
+    spriteLift(EnemyKind.Crawler) => 0.0
 
 fn spriteAt(kind: EnemyKind, depth: Float, side: Float) -> Sprite
     ? "Screen rectangle, in terminal cells, of an enemy depth ahead of the camera and side to its right"
@@ -321,13 +321,13 @@ fn spriteAt(kind: EnemyKind, depth: Float, side: Float) -> Sprite
     Sprite(kind = kind, depth = depth, left = Float.round(centre - Float.fromInt(cols) / 2.0), top = Float.round((feet - height) / 4.0), cols = cols, rows = Int.max(1, Float.round(height / 4.0)))
 
 verify spriteAt
-    spriteAt(EnemyKind.Demon, 2.0, 0.0).rows => 11
-    spriteAt(EnemyKind.Demon, 2.0, 0.0).cols => 21
-    spriteAt(EnemyKind.Demon, 2.0, 0.0).left => 20
-    spriteAt(EnemyKind.Demon, 2.0, 0.0).top => 5
-    spriteAt(EnemyKind.Imp, 60.0, 0.0).rows => 1
-    spriteAt(EnemyKind.Imp, 60.0, 0.0).cols => 1
-    spriteAt(EnemyKind.Imp, 4.0, 1.0).left > spriteAt(EnemyKind.Imp, 4.0, 0.0).left => true
+    spriteAt(EnemyKind.Brute, 2.0, 0.0).rows => 11
+    spriteAt(EnemyKind.Brute, 2.0, 0.0).cols => 21
+    spriteAt(EnemyKind.Brute, 2.0, 0.0).left => 20
+    spriteAt(EnemyKind.Brute, 2.0, 0.0).top => 5
+    spriteAt(EnemyKind.Crawler, 60.0, 0.0).rows => 1
+    spriteAt(EnemyKind.Crawler, 60.0, 0.0).cols => 1
+    spriteAt(EnemyKind.Crawler, 4.0, 1.0).left > spriteAt(EnemyKind.Crawler, 4.0, 0.0).left => true
 
 fn project(player: Player, e: Enemy) -> Option<Sprite>
     ? "The sprite of an enemy, unless it is behind the camera or too close to draw"
@@ -341,9 +341,9 @@ fn project(player: Player, e: Enemy) -> Option<Sprite>
         false -> Option.Some(spriteAt(e.kind, depth, ry * dirX - rx * dirY))
 
 verify project
-    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(0.0, 1.0, EnemyKind.Imp, 3)) => Option.None
-    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 1.0, EnemyKind.Demon, 8)) => Option.Some(spriteAt(EnemyKind.Demon, 2.0, 0.0))
-    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 2.0, EnemyKind.Demon, 8)) => Option.Some(spriteAt(EnemyKind.Demon, 2.0, 1.0))
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3)) => Option.None
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 1.0, EnemyKind.Brute, 8)) => Option.Some(spriteAt(EnemyKind.Brute, 2.0, 0.0))
+    project(Types.mkPlayer(1.0, 1.0), Types.mkEnemy(3.0, 2.0, EnemyKind.Brute, 8)) => Option.Some(spriteAt(EnemyKind.Brute, 2.0, 1.0))
 
 fn insertFarFirst(s: Sprite, sorted: List<Sprite>, before: List<Sprite>) -> List<Sprite>
     ? "Insert a sprite into a list ordered farthest first; before holds the farther ones already passed, nearest first"
@@ -354,10 +354,10 @@ fn insertFarFirst(s: Sprite, sorted: List<Sprite>, before: List<Sprite>) -> List
             false -> insertFarFirst(s, rest, List.prepend(head, before))
 
 verify insertFarFirst
-    insertFarFirst(spriteAt(EnemyKind.Imp, 2.0, 0.0), [], []) => [spriteAt(EnemyKind.Imp, 2.0, 0.0)]
-    insertFarFirst(spriteAt(EnemyKind.Imp, 2.0, 0.0), [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 2.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0)]
-    insertFarFirst(spriteAt(EnemyKind.Imp, 0.5, 0.0), [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Imp, 3.0, 0.0), spriteAt(EnemyKind.Imp, 1.0, 0.0), spriteAt(EnemyKind.Imp, 0.5, 0.0)]
-    insertFarFirst(spriteAt(EnemyKind.Imp, 9.0, 0.0), [spriteAt(EnemyKind.Imp, 3.0, 0.0)], []) => [spriteAt(EnemyKind.Imp, 9.0, 0.0), spriteAt(EnemyKind.Imp, 3.0, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 2.0, 0.0), [], []) => [spriteAt(EnemyKind.Crawler, 2.0, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 2.0, 0.0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 2.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 0.5, 0.0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0)], []) => [spriteAt(EnemyKind.Crawler, 3.0, 0.0), spriteAt(EnemyKind.Crawler, 1.0, 0.0), spriteAt(EnemyKind.Crawler, 0.5, 0.0)]
+    insertFarFirst(spriteAt(EnemyKind.Crawler, 9.0, 0.0), [spriteAt(EnemyKind.Crawler, 3.0, 0.0)], []) => [spriteAt(EnemyKind.Crawler, 9.0, 0.0), spriteAt(EnemyKind.Crawler, 3.0, 0.0)]
 
 fn sprites(player: Player, enemies: List<Enemy>, acc: List<Sprite>) -> List<Sprite>
     ? "Sprites of the enemies ahead of the camera, farthest first, so painting in order lets the near cover the far"
@@ -369,7 +369,7 @@ fn sprites(player: Player, enemies: List<Enemy>, acc: List<Sprite>) -> List<Spri
 
 verify sprites
     sprites(Types.mkPlayer(1.0, 1.0), [], []) => []
-    sprites(Types.mkPlayer(1.0, 1.0), [Types.mkEnemy(3.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(0.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(5.0, 1.0, EnemyKind.Ghost, 4)], []) => [spriteAt(EnemyKind.Ghost, 4.0, 0.0), spriteAt(EnemyKind.Imp, 2.0, 0.0)]
+    sprites(Types.mkPlayer(1.0, 1.0), [Types.mkEnemy(3.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(5.0, 1.0, EnemyKind.Wisp, 4)], []) => [spriteAt(EnemyKind.Wisp, 4.0, 0.0), spriteAt(EnemyKind.Crawler, 2.0, 0.0)]
 
 fn inFront(cols: Vector<Column>, cx: Int, depth: Float) -> Bool
     ? "Is something at this depth nearer than the wall in both dot columns of terminal column cx"
@@ -394,10 +394,10 @@ fn spriteShows(s: Sprite, cols: Vector<Column>, cx: Int, cy: Int) -> Bool
             false -> false
 
 verify spriteShows
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 10) => true
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 25) => false
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 20, 5) => false
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 17) => false
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 30, 2) => false
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([]), 45, 10) => false
-    spriteShows(spriteAt(EnemyKind.Demon, 2.0, 0.0), Vector.fromList([Column.update(farColumn(), dist = 1.0)]), 0, 10) => false
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 10) => true
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 25) => false
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 20, 5) => false
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 17) => false
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 30, 2) => false
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([]), 45, 10) => false
+    spriteShows(spriteAt(EnemyKind.Brute, 2.0, 0.0), Vector.fromList([Column.update(farColumn(), dist = 1.0)]), 0, 10) => false

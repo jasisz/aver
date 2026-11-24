@@ -1,8 +1,8 @@
 module Enemy
     intent =
-        "Enemy AI and combat for Braille Doom."
+        "Enemy AI and combat for Braille Raycaster."
         "An enemy wakes when it sees the player, hunts the spot where it last saw them,"
-        "and strikes at arm's length. The imp is quick, the demon slow and heavy, the ghost blinks about."
+        "and strikes at arm's length. The crawler is quick, the brute slow and heavy, the wisp blinks about."
     depends [Types, Rng, Tiles, Ray, Math]
     effects []
 
@@ -58,50 +58,50 @@ verify shotDamage
 fn sightRange(kind: EnemyKind) -> Float
     ? "How far an enemy kind sees"
     match kind
-        EnemyKind.Imp -> 10.0
-        EnemyKind.Demon -> 7.0
-        EnemyKind.Ghost -> 9.0
+        EnemyKind.Crawler -> 10.0
+        EnemyKind.Brute -> 7.0
+        EnemyKind.Wisp -> 9.0
 
 verify sightRange
-    sightRange(EnemyKind.Imp) => 10.0
-    sightRange(EnemyKind.Demon) => 7.0
-    sightRange(EnemyKind.Ghost) => 9.0
+    sightRange(EnemyKind.Crawler) => 10.0
+    sightRange(EnemyKind.Brute) => 7.0
+    sightRange(EnemyKind.Wisp) => 9.0
 
 fn speed(kind: EnemyKind) -> Float
     ? "Distance an enemy kind covers per turn; the player covers 0.15"
     match kind
-        EnemyKind.Imp -> 0.12
-        EnemyKind.Demon -> 0.07
-        EnemyKind.Ghost -> 0.09
+        EnemyKind.Crawler -> 0.12
+        EnemyKind.Brute -> 0.07
+        EnemyKind.Wisp -> 0.09
 
 verify speed
-    speed(EnemyKind.Imp) => 0.12
-    speed(EnemyKind.Demon) => 0.07
-    speed(EnemyKind.Ghost) => 0.09
+    speed(EnemyKind.Crawler) => 0.12
+    speed(EnemyKind.Brute) => 0.07
+    speed(EnemyKind.Wisp) => 0.09
 
 fn enemyDamage(kind: EnemyKind) -> Int
     ? "Damage per strike by enemy kind"
     match kind
-        EnemyKind.Imp -> 3
-        EnemyKind.Demon -> 9
-        EnemyKind.Ghost -> 6
+        EnemyKind.Crawler -> 3
+        EnemyKind.Brute -> 9
+        EnemyKind.Wisp -> 6
 
 verify enemyDamage
-    enemyDamage(EnemyKind.Imp) => 3
-    enemyDamage(EnemyKind.Demon) => 9
-    enemyDamage(EnemyKind.Ghost) => 6
+    enemyDamage(EnemyKind.Crawler) => 3
+    enemyDamage(EnemyKind.Brute) => 9
+    enemyDamage(EnemyKind.Wisp) => 6
 
 fn hitRadius(kind: EnemyKind) -> Float
     ? "How far from the centre of an enemy a shot still hits, matching the width it is drawn at"
     match kind
-        EnemyKind.Imp -> 0.3
-        EnemyKind.Demon -> 0.45
-        EnemyKind.Ghost -> 0.35
+        EnemyKind.Crawler -> 0.3
+        EnemyKind.Brute -> 0.45
+        EnemyKind.Wisp -> 0.35
 
 verify hitRadius
-    hitRadius(EnemyKind.Imp) => 0.3
-    hitRadius(EnemyKind.Demon) => 0.45
-    hitRadius(EnemyKind.Ghost) => 0.35
+    hitRadius(EnemyKind.Crawler) => 0.3
+    hitRadius(EnemyKind.Brute) => 0.45
+    hitRadius(EnemyKind.Wisp) => 0.35
 
 record Struck
     enemy: Enemy
@@ -124,19 +124,19 @@ fn sees(enemy: Enemy, px: Float, py: Float, grid: Grid) -> Bool
         false -> false
 
 verify sees
-    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....", "####", "...."])) => true
-    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])) => false
-    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Demon, 8), 8.5, 0.5, Tiles.gridOf(["..........."])) => false
-    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 8.5, 0.5, Tiles.gridOf(["..........."])) => true
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5, Tiles.gridOf(["....", "####", "...."])) => true
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])) => false
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Brute, 8), 8.5, 0.5, Tiles.gridOf(["..........."])) => false
+    sees(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 8.5, 0.5, Tiles.gridOf(["..........."])) => true
 
 fn notice(enemy: Enemy, px: Float, py: Float) -> Enemy
     ? "The enemy knows the player is at (px, py)"
     Enemy.update(enemy, alert = memory(), seenX = px, seenY = py)
 
 verify notice
-    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 4.0, 5.0).alert => memory()
-    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 4.0, 5.0).seenX => 4.0
-    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 4.0, 5.0).seenY => 5.0
+    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), 4.0, 5.0).alert => memory()
+    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), 4.0, 5.0).seenX => 4.0
+    notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), 4.0, 5.0).seenY => 5.0
 
 fn think(enemy: Enemy, px: Float, py: Float, grid: Grid) -> Enemy
     ? "Refresh what the enemy knows: a fresh sighting, or a trail one turn colder"
@@ -145,10 +145,10 @@ fn think(enemy: Enemy, px: Float, py: Float, grid: Grid) -> Enemy
         false -> Enemy.update(enemy, alert = Int.max(0, enemy.alert - 1))
 
 verify think
-    think(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....", "####", "...."])).alert => memory()
-    think(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).alert => 0
-    think(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).alert => memory() - 1
-    think(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).seenX => 3.5
+    think(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5, Tiles.gridOf(["....", "####", "...."])).alert => memory()
+    think(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).alert => 0
+    think(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).alert => memory() - 1
+    think(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."])).seenX => 3.5
 
 // ─── Movement ──────────────────────────────────────────────────────────────
 
@@ -165,10 +165,10 @@ fn slide(enemy: Enemy, grid: Grid, dx: Float, dy: Float) -> Enemy
     Enemy.update(enemy, x = nx, y = ny)
 
 verify slide
-    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "....", "...."]), 0.5, 0.0).x => 2.0
-    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "..#.", "...."]), 0.5, 0.25).x => 1.5
-    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "..#.", "...."]), 0.5, 0.25).y => 1.75
-    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), Tiles.gridOf(["....", "....", "..#."]), 0.5, 0.5).y => 1.5
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Crawler, 3), Tiles.gridOf(["....", "....", "...."]), 0.5, 0.0).x => 2.0
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Crawler, 3), Tiles.gridOf(["....", "..#.", "...."]), 0.5, 0.25).x => 1.5
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Crawler, 3), Tiles.gridOf(["....", "..#.", "...."]), 0.5, 0.25).y => 1.75
+    slide(Types.mkEnemy(1.5, 1.5, EnemyKind.Crawler, 3), Tiles.gridOf(["....", "....", "..#."]), 0.5, 0.5).y => 1.5
 
 fn moveToward(enemy: Enemy, tx: Float, ty: Float, grid: Grid) -> Enemy
     ? "Move one step toward a target, never past it"
@@ -179,9 +179,9 @@ fn moveToward(enemy: Enemy, tx: Float, ty: Float, grid: Grid) -> Enemy
         false -> slide(enemy, grid, (tx - enemy.x) / d * step, (ty - enemy.y) / d * step)
 
 verify moveToward
-    moveToward(Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3), 1.5, 1.5, Tiles.gridOf(["....", "....", "...."])) => Types.mkEnemy(1.5, 1.5, EnemyKind.Imp, 3)
-    moveToward(Types.mkEnemy(0.5, 1.5, EnemyKind.Imp, 3), 3.5, 1.5, Tiles.gridOf(["....", "....", "...."])).x => 0.62
-    moveToward(Types.mkEnemy(0.5, 1.5, EnemyKind.Imp, 3), 0.55, 1.5, Tiles.gridOf(["....", "....", "...."])).x => 0.55
+    moveToward(Types.mkEnemy(1.5, 1.5, EnemyKind.Crawler, 3), 1.5, 1.5, Tiles.gridOf(["....", "....", "...."])) => Types.mkEnemy(1.5, 1.5, EnemyKind.Crawler, 3)
+    moveToward(Types.mkEnemy(0.5, 1.5, EnemyKind.Crawler, 3), 3.5, 1.5, Tiles.gridOf(["....", "....", "...."])).x => 0.62
+    moveToward(Types.mkEnemy(0.5, 1.5, EnemyKind.Crawler, 3), 0.55, 1.5, Tiles.gridOf(["....", "....", "...."])).x => 0.55
 
 fn blinkSpot(enemy: Enemy, seed: Int) -> Tuple<Float, Float>
     ? "Centre of a random tile up to 3 tiles away"
@@ -190,32 +190,32 @@ fn blinkSpot(enemy: Enemy, seed: Int) -> Tuple<Float, Float>
     (Float.fromInt(Float.floor(enemy.x) + Rng.seedToRange(s1, 0 - 3, 3)) + 0.5, Float.fromInt(Float.floor(enemy.y) + Rng.seedToRange(s2, 0 - 3, 3)) + 0.5)
 
 verify blinkSpot
-    blinkSpot(Types.mkEnemy(5.2, 5.7, EnemyKind.Ghost, 4), 42) => (6.5, 2.5)
+    blinkSpot(Types.mkEnemy(5.2, 5.7, EnemyKind.Wisp, 4), 42) => (6.5, 2.5)
 
 fn blink(enemy: Enemy, seed: Int, px: Float, py: Float, grid: Grid) -> Enemy
-    ? "Ghost jump to a random nearby tile; it stays put when the tile is wall or within the player's reach"
+    ? "Wisp jump to a random nearby tile; it stays put when the tile is wall or within the player's reach"
     match blinkSpot(enemy, seed)
         (nx, ny) -> match Bool.or(Tiles.blocked(grid, nx, ny, bodyRadius()), Math.dist(nx, ny, px, py) < 1.5)
             true -> enemy
             false -> Enemy.update(enemy, x = nx, y = ny)
 
 verify blink
-    blink(Types.mkEnemy(1.5, 1.5, EnemyKind.Ghost, 4), 42, 9.0, 9.0, Tiles.gridOf(["####", "#.##", "####"])) => Types.mkEnemy(1.5, 1.5, EnemyKind.Ghost, 4)
+    blink(Types.mkEnemy(1.5, 1.5, EnemyKind.Wisp, 4), 42, 9.0, 9.0, Tiles.gridOf(["####", "#.##", "####"])) => Types.mkEnemy(1.5, 1.5, EnemyKind.Wisp, 4)
 
 verify blink law neverIntoAWallOrOntoThePlayer
     given seed: Int = 0..60
-    Bool.or(Tiles.blocked(Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."]), blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).x, blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).y, bodyRadius()), Math.dist(blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).x, blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Ghost, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).y, 0.5, 0.5) < 1.5) => false
+    Bool.or(Tiles.blocked(Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."]), blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Wisp, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).x, blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Wisp, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).y, bodyRadius()), Math.dist(blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Wisp, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).x, blink(Types.mkEnemy(2.5, 2.5, EnemyKind.Wisp, 4), seed, 0.5, 0.5, Tiles.gridOf([".....", ".#.#.", ".....", ".#.#.", "....."])).y, 0.5, 0.5) < 1.5) => false
 
 fn blinks(enemy: Enemy, turn: Int) -> Bool
-    ? "Does this enemy jump instead of walking this turn: a ghost, every sixth turn"
+    ? "Does this enemy jump instead of walking this turn: a wisp, every sixth turn"
     match enemy.kind
-        EnemyKind.Ghost -> Int.mod(turn, 6) == 0
+        EnemyKind.Wisp -> Int.mod(turn, 6) == 0
         _ -> false
 
 verify blinks
-    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4), 12) => true
-    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Ghost, 4), 13) => false
-    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 12) => false
+    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Wisp, 4), 12) => true
+    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Wisp, 4), 13) => false
+    blinks(Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), 12) => false
 
 fn act(enemy: Enemy, px: Float, py: Float, grid: Grid, seed: Int, turn: Int) -> Enemy
     ? "Move an enemy that is on the player's trail; an idle one, or one already in reach, stays"
@@ -226,9 +226,9 @@ fn act(enemy: Enemy, px: Float, py: Float, grid: Grid, seed: Int, turn: Int) -> 
             false -> moveToward(enemy, enemy.seenX, enemy.seenY, grid)
 
 verify act
-    act(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 0.5
-    act(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 0.62
-    act(notice(Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), 3.5, 0.5), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 3.0
+    act(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 0.5
+    act(notice(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 0.62
+    act(notice(Types.mkEnemy(3.0, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).x => 3.0
 
 // ─── Striking the player ───────────────────────────────────────────────────
 
@@ -241,21 +241,21 @@ fn strike(enemy: Enemy, px: Float, py: Float) -> Struck
             false -> Struck(enemy = enemy, damage = 0)
 
 verify strike
-    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), 1.5, 1.0).damage => 9
-    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), 1.5, 1.0).enemy.cooldown => attackDelay()
-    strike(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0).damage => 0
-    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 5.0, 1.0), 5.0, 1.0).damage => 0
-    strike(Enemy.update(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), cooldown = 2), 1.5, 1.0).damage => 0
-    strike(Enemy.update(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 1.5, 1.0), cooldown = 2), 1.5, 1.0).enemy.cooldown => 1
+    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 1.5, 1.0), 1.5, 1.0).damage => 9
+    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 1.5, 1.0), 1.5, 1.0).enemy.cooldown => attackDelay()
+    strike(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 1.5, 1.0).damage => 0
+    strike(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 5.0, 1.0), 5.0, 1.0).damage => 0
+    strike(Enemy.update(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 1.5, 1.0), cooldown = 2), 1.5, 1.0).damage => 0
+    strike(Enemy.update(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 1.5, 1.0), cooldown = 2), 1.5, 1.0).enemy.cooldown => 1
 
 fn tick(enemy: Enemy, px: Float, py: Float, grid: Grid, seed: Int, turn: Int) -> Struck
     ? "One turn of one enemy: look, move, strike"
     strike(act(think(enemy, px, py, grid), px, py, grid, seed, turn), px, py)
 
 verify tick
-    tick(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).enemy.x => 0.62
-    tick(Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."]), 42, 1) => Struck(enemy = Types.mkEnemy(0.5, 0.5, EnemyKind.Imp, 3), damage = 0)
-    tick(Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).damage => 3
+    tick(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).enemy.x => 0.62
+    tick(Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), 0.5, 2.5, Tiles.gridOf(["....", "####", "...."]), 42, 1) => Struck(enemy = Types.mkEnemy(0.5, 0.5, EnemyKind.Crawler, 3), damage = 0)
+    tick(Types.mkEnemy(3.0, 0.5, EnemyKind.Crawler, 3), 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1).damage => 3
 
 fn tickAll(enemies: List<Enemy>, px: Float, py: Float, grid: Grid, seed: Int, turn: Int, acc: List<Enemy>, damage: Int) -> Round
     ? "One turn of every enemy: the enemies afterwards and the total damage to the player"
@@ -265,14 +265,14 @@ fn tickAll(enemies: List<Enemy>, px: Float, py: Float, grid: Grid, seed: Int, tu
 
 verify tickAll
     tickAll([], 1.0, 1.0, Tiles.gridOf(["....."]), 42, 0, [], 0) => Round(enemies = [], damage = 0)
-    tickAll([Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.0, 0.5, EnemyKind.Demon, 8)], 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1, [], 0).damage => 12
+    tickAll([Types.mkEnemy(3.0, 0.5, EnemyKind.Crawler, 3), Types.mkEnemy(4.0, 0.5, EnemyKind.Brute, 8)], 3.5, 0.5, Tiles.gridOf(["....."]), 42, 1, [], 0).damage => 12
 
 fn tickRest(rest: List<Enemy>, px: Float, py: Float, grid: Grid, seed: Int, turn: Int, acc: List<Enemy>, damage: Int, struck: Struck) -> Round
     ? "Record one enemy's turn and go on with the rest, each on its own random numbers"
     tickAll(rest, px, py, grid, Rng.nextSeed(seed), turn, List.prepend(struck.enemy, acc), damage + struck.damage)
 
 verify tickRest
-    tickRest([], 1.0, 1.0, Tiles.gridOf(["....."]), 42, 0, [], 2, Struck(enemy = Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3), damage = 3)) => Round(enemies = [Types.mkEnemy(3.0, 0.5, EnemyKind.Imp, 3)], damage = 5)
+    tickRest([], 1.0, 1.0, Tiles.gridOf(["....."]), 42, 0, [], 2, Struck(enemy = Types.mkEnemy(3.0, 0.5, EnemyKind.Crawler, 3), damage = 3)) => Round(enemies = [Types.mkEnemy(3.0, 0.5, EnemyKind.Crawler, 3)], damage = 5)
 
 // ─── Shooting ──────────────────────────────────────────────────────────────
 
@@ -281,16 +281,16 @@ fn along(e: Enemy, px: Float, py: Float, dx: Float, dy: Float) -> Float
     (e.x - px) * dx + (e.y - py) * dy
 
 verify along
-    along(Types.mkEnemy(4.0, 2.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 3.0
-    along(Types.mkEnemy(0.0, 2.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 0.0 - 1.0
+    along(Types.mkEnemy(4.0, 2.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0) => 3.0
+    along(Types.mkEnemy(0.0, 2.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0) => 0.0 - 1.0
 
 fn aside(e: Enemy, px: Float, py: Float, dx: Float, dy: Float) -> Float
     ? "How far the enemy's centre is from the line of the shot"
     Float.abs((e.x - px) * dy - (e.y - py) * dx)
 
 verify aside
-    aside(Types.mkEnemy(4.0, 2.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 1.0
-    aside(Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0) => 0.0
+    aside(Types.mkEnemy(4.0, 2.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0) => 1.0
+    aside(Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0) => 0.0
 
 fn inSights(e: Enemy, px: Float, py: Float, dx: Float, dy: Float, wallDist: Float) -> Bool
     ? "Would a shot along the unit direction (dx, dy) hit this enemy before the wall"
@@ -298,11 +298,11 @@ fn inSights(e: Enemy, px: Float, py: Float, dx: Float, dy: Float, wallDist: Floa
     Bool.and(Bool.and(a > 0.0, a < wallDist), aside(e, px, py, dx, dy) < hitRadius(e.kind))
 
 verify inSights
-    inSights(Types.mkEnemy(4.0, 1.2, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => true
-    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
-    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Demon, 8), 1.0, 1.0, 1.0, 0.0, 6.0) => true
-    inSights(Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 2.5) => false
-    inSights(Types.mkEnemy(0.0, 1.0, EnemyKind.Imp, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
+    inSights(Types.mkEnemy(4.0, 1.2, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => true
+    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
+    inSights(Types.mkEnemy(4.0, 1.4, EnemyKind.Brute, 8), 1.0, 1.0, 1.0, 0.0, 6.0) => true
+    inSights(Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 2.5) => false
+    inSights(Types.mkEnemy(0.0, 1.0, EnemyKind.Crawler, 3), 1.0, 1.0, 1.0, 0.0, 6.0) => false
 
 fn nearer(a: Tuple<Int, Enemy>, b: Tuple<Int, Enemy>, px: Float, py: Float, dx: Float, dy: Float) -> Tuple<Int, Enemy>
     ? "Of two indexed enemies, the one nearer along the shot; the first on a tie"
@@ -313,9 +313,9 @@ fn nearer(a: Tuple<Int, Enemy>, b: Tuple<Int, Enemy>, px: Float, py: Float, dx: 
                 false -> a
 
 verify nearer
-    nearer((0, Types.mkEnemy(3.0, 1.0, EnemyKind.Imp, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3)), 1.0, 1.0, 1.0, 0.0) => (0, Types.mkEnemy(3.0, 1.0, EnemyKind.Imp, 3))
-    nearer((0, Types.mkEnemy(5.0, 1.0, EnemyKind.Imp, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3)), 1.0, 1.0, 1.0, 0.0) => (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3))
-    nearer((0, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Demon, 8)), 1.0, 1.0, 1.0, 0.0) => (0, Types.mkEnemy(4.0, 1.0, EnemyKind.Imp, 3))
+    nearer((0, Types.mkEnemy(3.0, 1.0, EnemyKind.Crawler, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3)), 1.0, 1.0, 1.0, 0.0) => (0, Types.mkEnemy(3.0, 1.0, EnemyKind.Crawler, 3))
+    nearer((0, Types.mkEnemy(5.0, 1.0, EnemyKind.Crawler, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3)), 1.0, 1.0, 1.0, 0.0) => (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3))
+    nearer((0, Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3)), (2, Types.mkEnemy(4.0, 1.0, EnemyKind.Brute, 8)), 1.0, 1.0, 1.0, 0.0) => (0, Types.mkEnemy(4.0, 1.0, EnemyKind.Crawler, 3))
 
 fn target(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, wallDist: Float, i: Int, best: Option<Tuple<Int, Enemy>>) -> Option<Tuple<Int, Enemy>>
     ? "Index and value of the first enemy a shot would hit, if any"
@@ -327,7 +327,7 @@ fn target(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, wall
 
 verify target
     target([], 1.0, 1.0, 1.0, 0.0, 6.0, 0, Option.None) => Option.None
-    target([Types.mkEnemy(5.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(1.0, 4.0, EnemyKind.Imp, 3), Types.mkEnemy(3.0, 1.0, EnemyKind.Ghost, 4)], 1.0, 1.0, 1.0, 0.0, 6.0, 0, Option.None) => Option.Some((2, Types.mkEnemy(3.0, 1.0, EnemyKind.Ghost, 4)))
+    target([Types.mkEnemy(5.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(1.0, 4.0, EnemyKind.Crawler, 3), Types.mkEnemy(3.0, 1.0, EnemyKind.Wisp, 4)], 1.0, 1.0, 1.0, 0.0, 6.0, 0, Option.None) => Option.Some((2, Types.mkEnemy(3.0, 1.0, EnemyKind.Wisp, 4)))
 
 fn aimedAt(enemies: List<Enemy>, player: Player, grid: Grid) -> Option<Tuple<Int, Enemy>>
     ? "The enemy under the crosshair: the one a shot fired now would hit"
@@ -336,9 +336,9 @@ fn aimedAt(enemies: List<Enemy>, player: Player, grid: Grid) -> Option<Tuple<Int
     target(enemies, player.x, player.y, dx, dy, Ray.cast(grid, player.x, player.y, dx, dy).dist, 0, Option.None)
 
 verify aimedAt
-    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Option.Some((0, Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)))
-    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."])) => Option.None
-    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Player.update(Types.mkPlayer(0.5, 0.5), angle = Float.pi()), Tiles.gridOf(["....."])) => Option.None
+    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Option.Some((0, Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)))
+    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."])) => Option.None
+    aimedAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)], Player.update(Types.mkPlayer(0.5, 0.5), angle = Float.pi()), Tiles.gridOf(["....."])) => Option.None
 
 fn wound(e: Enemy, px: Float, py: Float) -> Option<Enemy>
     ? "An enemy after a shot from (px, py): gone, or hurt and aware of the shooter"
@@ -347,9 +347,9 @@ fn wound(e: Enemy, px: Float, py: Float) -> Option<Enemy>
         false -> Option.None
 
 verify wound
-    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), 2.0, 2.0) => Option.None
-    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8), 2.0, 2.0) => Option.Some(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 3), 2.0, 2.0))
-    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 5), 2.0, 2.0) => Option.None
+    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), 2.0, 2.0) => Option.None
+    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8), 2.0, 2.0) => Option.Some(notice(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 3), 2.0, 2.0))
+    wound(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 5), 2.0, 2.0) => Option.None
 
 fn woundAt(enemies: List<Enemy>, idx: Int, px: Float, py: Float, acc: List<Enemy>) -> List<Enemy>
     ? "The enemies after a shot hits the one at idx"
@@ -363,9 +363,9 @@ fn woundAt(enemies: List<Enemy>, idx: Int, px: Float, py: Float, acc: List<Enemy
 
 verify woundAt
     woundAt([], 0, 2.0, 2.0, []) => []
-    woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 2.0, 2.0, []) => [Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)]
-    List.len(woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 1, 2.0, 2.0, [])) => 2
-    woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 3, 2.0, 2.0, []) => [Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]
+    woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Brute, 8)], 0, 2.0, 2.0, []) => [Types.mkEnemy(2.0, 2.0, EnemyKind.Brute, 8)]
+    List.len(woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Brute, 8)], 1, 2.0, 2.0, [])) => 2
+    woundAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3)], 3, 2.0, 2.0, []) => [Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3)]
 
 fn shotMessage(e: Enemy) -> String
     ? "What the player reads after hitting this enemy"
@@ -374,8 +374,8 @@ fn shotMessage(e: Enemy) -> String
         false -> "The {Types.enemyName(e.kind)} falls."
 
 verify shotMessage
-    shotMessage(Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => "The imp falls."
-    shotMessage(Types.mkEnemy(1.0, 1.0, EnemyKind.Demon, 8)) => "You hit the demon: 3 HP left."
+    shotMessage(Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3)) => "The crawler falls."
+    shotMessage(Types.mkEnemy(1.0, 1.0, EnemyKind.Brute, 8)) => "You hit the brute: 3 HP left."
 
 fn shoot(enemies: List<Enemy>, player: Player, grid: Grid) -> Shot
     ? "Fire along the player's facing: the enemies afterwards and a message"
@@ -385,5 +385,5 @@ fn shoot(enemies: List<Enemy>, player: Player, grid: Grid) -> Shot
 
 verify shoot
     shoot([], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Shot(enemies = [], message = "Your shot hits the wall.")
-    shoot([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Shot(enemies = [], message = "The imp falls.")
-    shoot([Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."])).message => "Your shot hits the wall."
+    shoot([Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."])) => Shot(enemies = [], message = "The crawler falls.")
+    shoot([Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."])).message => "Your shot hits the wall."

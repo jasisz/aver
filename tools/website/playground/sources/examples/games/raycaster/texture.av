@@ -214,25 +214,25 @@ fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int
     cx < shapeWidth(kind, cy)
 
 verify isInsideShape
-    isInsideShape(EnemyKind.Demon, 5, 5, 10, 10) => true
-    isInsideShape(EnemyKind.Demon, 0, 0, 10, 10) => false
-    isInsideShape(EnemyKind.Imp, 0, 0, 1, 1) => true
-    isInsideShape(EnemyKind.Ghost, 0, 0, 1, 1) => true
+    isInsideShape(EnemyKind.Brute, 5, 5, 10, 10) => true
+    isInsideShape(EnemyKind.Brute, 0, 0, 10, 10) => false
+    isInsideShape(EnemyKind.Crawler, 0, 0, 1, 1) => true
+    isInsideShape(EnemyKind.Wisp, 0, 0, 1, 1) => true
 
 fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
     ? "Silhouette half-width at normalized height (0 = top, 1 = bottom)"
     match kind
-        EnemyKind.Imp -> impWidth(cy)
-        EnemyKind.Demon -> demonWidth(cy)
-        EnemyKind.Ghost -> ghostWidth(cy)
+        EnemyKind.Crawler -> crawlerWidth(cy)
+        EnemyKind.Brute -> bruteWidth(cy)
+        EnemyKind.Wisp -> wispWidth(cy)
 
 verify shapeWidth
-    shapeWidth(EnemyKind.Ghost, 0.5) => 0.9
-    shapeWidth(EnemyKind.Imp, 0.5) => 0.75
-    shapeWidth(EnemyKind.Demon, 0.5) => 0.95
+    shapeWidth(EnemyKind.Wisp, 0.5) => 0.9
+    shapeWidth(EnemyKind.Crawler, 0.5) => 0.75
+    shapeWidth(EnemyKind.Brute, 0.5) => 0.95
 
-fn impWidth(cy: Float) -> Float
-    ? "Imp: small head, thin neck, wide torso, narrow waist, legs"
+fn crawlerWidth(cy: Float) -> Float
+    ? "Crawler: small head, thin neck, wide torso, narrow waist, legs"
     match cy < 0.2
         true -> 0.45
         false -> match cy < 0.3
@@ -243,32 +243,32 @@ fn impWidth(cy: Float) -> Float
                     true -> 0.4
                     false -> 0.7
 
-verify impWidth
-    impWidth(0.1) => 0.45
-    impWidth(0.25) => 0.25
-    impWidth(0.5) => 0.75
-    impWidth(0.7) => 0.4
-    impWidth(0.9) => 0.7
+verify crawlerWidth
+    crawlerWidth(0.1) => 0.45
+    crawlerWidth(0.25) => 0.25
+    crawlerWidth(0.5) => 0.75
+    crawlerWidth(0.7) => 0.4
+    crawlerWidth(0.9) => 0.7
 
-fn demonWidth(cy: Float) -> Float
-    ? "Demon: massive — wide head, huge body, thick legs"
+fn bruteWidth(cy: Float) -> Float
+    ? "Brute: massive — wide head, huge body, thick legs"
     match cy < 0.15
         true -> 0.7
         false -> match cy < 0.75
             true -> 0.95
             false -> 0.75
 
-verify demonWidth
-    demonWidth(0.1) => 0.7
-    demonWidth(0.5) => 0.95
-    demonWidth(0.9) => 0.75
+verify bruteWidth
+    bruteWidth(0.1) => 0.7
+    bruteWidth(0.5) => 0.95
+    bruteWidth(0.9) => 0.75
 
-fn ghostWidth(cy: Float) -> Float
-    ? "Ghost: a round body, widest in the middle"
+fn wispWidth(cy: Float) -> Float
+    ? "Wisp: a round body, widest in the middle"
     t = cy * 2.0 - 1.0
     Float.sqrt(Float.max(0.0, 1.0 - t * t)) * 0.9
 
-verify ghostWidth
-    ghostWidth(0.5) => 0.9
-    ghostWidth(0.0) => 0.0
-    ghostWidth(1.0) => 0.0
+verify wispWidth
+    wispWidth(0.5) => 0.9
+    wispWidth(0.0) => 0.0
+    wispWidth(1.0) => 0.0

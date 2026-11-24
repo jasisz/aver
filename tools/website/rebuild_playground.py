@@ -33,12 +33,12 @@ GAMES = [
     Game("tetris", "tetris/main.av", "tetris"),
     Game("checkers", "checkers/main.av", "checkers"),
     Game("rogue", "rogue/main.av", "rogue"),
-    Game("doom", "doom/main.av", "doom"),
+    Game("raycaster", "raycaster/main.av", "raycaster"),
     Game("wumpus", "wumpus.av"),
     Game("eggcatch", "eggcatch/main.av", "eggcatch"),
 ]
 
-DIR_MIRRORS = ["checkers", "doom", "eggcatch", "rogue", "tetris"]
+DIR_MIRRORS = ["checkers", "eggcatch", "raycaster", "rogue", "tetris"]
 FILE_MIRRORS = ["life.av", "snake.av", "wumpus.av"]
 
 

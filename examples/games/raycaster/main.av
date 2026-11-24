@@ -1,6 +1,6 @@
 module Main
     intent =
-        "Doom-like raycasting FPS rendered with Unicode Braille characters."
+        "Braille Raycaster: a first-person raycasting shooter rendered with Unicode Braille characters."
         "Procedural levels, wall textures, enemies with AI, minimap."
         "The game is turn-based: the world moves one step for each key the player presses."
     depends [Math, Level, Tiles, Ray, Render, Types, Rng, Enemy]
@@ -63,14 +63,14 @@ verify safeDistance
 fn pickKind(seed: Int) -> EnemyKind
     ? "Choose enemy kind from seed"
     match Rng.seedToRange(seed, 0, 2)
-        0 -> EnemyKind.Imp
-        1 -> EnemyKind.Demon
-        _ -> EnemyKind.Ghost
+        0 -> EnemyKind.Crawler
+        1 -> EnemyKind.Brute
+        _ -> EnemyKind.Wisp
 
 verify pickKind
-    pickKind(0) => EnemyKind.Imp
-    pickKind(1) => EnemyKind.Demon
-    pickKind(2) => EnemyKind.Ghost
+    pickKind(0) => EnemyKind.Crawler
+    pickKind(1) => EnemyKind.Brute
+    pickKind(2) => EnemyKind.Wisp
 
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
@@ -254,8 +254,8 @@ fn handleShoot(state: GameState) -> GameState
 
 verify handleShoot
     handleShoot(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0)).messages => ["Your shot hits the wall."]
-    handleShoot(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)])).enemies => []
-    handleShoot(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)])).messages => ["The imp falls."]
+    handleShoot(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)])).enemies => []
+    handleShoot(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)])).messages => ["The crawler falls."]
 
 fn statusAfter(hp: Int, enemies: List<Enemy>) -> Status
     ? "How the game stands after a turn: lost with no health, won with no enemies left"
@@ -268,7 +268,7 @@ fn statusAfter(hp: Int, enemies: List<Enemy>) -> Status
 verify statusAfter
     statusAfter(0, []) => Status.Dead
     statusAfter(5, []) => Status.Cleared
-    statusAfter(5, [Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]) => Status.Playing
+    statusAfter(5, [Types.mkEnemy(1.0, 1.0, EnemyKind.Crawler, 3)]) => Status.Playing
 
 fn turnMessages(msgs: List<String>, damage: Int, hp: Int) -> List<String>
     ? "Messages after a turn in which the player took damage and has hp left"
@@ -292,9 +292,9 @@ fn updateTurn(state: GameState) -> GameState
 verify updateTurn
     updateTurn(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0)).turnCount => 1
     updateTurn(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0)).status => Status.Cleared
-    updateTurn(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(1.0, 0.5, EnemyKind.Demon, 8)])).player.hp => 91
-    updateTurn(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(1.0, 0.5, EnemyKind.Demon, 8)])).status => Status.Playing
-    updateTurn(GameState.update(stateAt(Tiles.gridOf(["..#.."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)])).enemies => [Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)]
+    updateTurn(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(1.0, 0.5, EnemyKind.Brute, 8)])).player.hp => 91
+    updateTurn(GameState.update(stateAt(Tiles.gridOf(["....."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(1.0, 0.5, EnemyKind.Brute, 8)])).status => Status.Playing
+    updateTurn(GameState.update(stateAt(Tiles.gridOf(["..#.."]), 0.5, 0.5, 0.0), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)])).enemies => [Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)]
 
 fn trimMessages(msgs: List<String>) -> List<String>
     ? "Keep only the last 3 messages"
@@ -399,7 +399,7 @@ fn cleanup() -> Result<Unit, String>
     Terminal.clear()?
     Render.moveToChecked(0, 0)?
     Terminal.resetColor()?
-    Terminal.print("Thanks for playing Braille Doom!\n")?
+    Terminal.print("Thanks for playing Braille Raycaster!\n")?
     Terminal.flush()
 
 fn main() -> Result<Unit, String>

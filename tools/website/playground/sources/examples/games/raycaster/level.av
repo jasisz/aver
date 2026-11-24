@@ -66,9 +66,10 @@ verify buildMap
 
 fn setCharAt(s: String, idx: Int, ch: String) -> String
     ? "Replace the character at idx; an index outside the string changes nothing"
-    match Bool.or(idx < 0, idx >= String.len(s))
+    len = String.len(s)
+    match Bool.or(idx < 0, idx >= len)
         true -> s
-        false -> String.slice(s, 0, idx) + ch + String.slice(s, idx + 1, String.len(s))
+        false -> String.slice(s, 0, idx) + ch + String.slice(s, idx + 1, len)
 
 verify setCharAt
     setCharAt("####", 1, ".") => "#.##"

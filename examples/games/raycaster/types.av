@@ -1,6 +1,6 @@
 module Types
     intent =
-        "Shared data types for Braille Doom: the level grid, player, enemies,"
+        "Shared data types for Braille Raycaster: the level grid, player, enemies,"
         "game state, ray hits, and small helpers on them."
     depends []
     effects []
@@ -15,9 +15,9 @@ type Face
     NorthSouth
 
 type EnemyKind
-    Imp
-    Demon
-    Ghost
+    Crawler
+    Brute
+    Wisp
 
 type Status
     Playing
@@ -80,45 +80,45 @@ fn mkEnemy(ex: Float, ey: Float, kind: EnemyKind, hp: Int) -> Enemy
     Enemy(x = ex, y = ey, kind = kind, hp = hp, cooldown = 0, alert = 0, seenX = ex, seenY = ey)
 
 verify mkEnemy
-    mkEnemy(2.0, 3.0, EnemyKind.Imp, 3).hp => 3
-    mkEnemy(2.0, 3.0, EnemyKind.Demon, 8).kind => EnemyKind.Demon
-    mkEnemy(2.0, 3.0, EnemyKind.Demon, 8).alert => 0
+    mkEnemy(2.0, 3.0, EnemyKind.Crawler, 3).hp => 3
+    mkEnemy(2.0, 3.0, EnemyKind.Brute, 8).kind => EnemyKind.Brute
+    mkEnemy(2.0, 3.0, EnemyKind.Brute, 8).alert => 0
 
 fn enemyName(kind: EnemyKind) -> String
     ? "Name of an enemy kind as used in messages"
     match kind
-        EnemyKind.Imp -> "imp"
-        EnemyKind.Demon -> "demon"
-        EnemyKind.Ghost -> "ghost"
+        EnemyKind.Crawler -> "crawler"
+        EnemyKind.Brute -> "brute"
+        EnemyKind.Wisp -> "wisp"
 
 verify enemyName
-    enemyName(EnemyKind.Imp) => "imp"
-    enemyName(EnemyKind.Demon) => "demon"
-    enemyName(EnemyKind.Ghost) => "ghost"
+    enemyName(EnemyKind.Crawler) => "crawler"
+    enemyName(EnemyKind.Brute) => "brute"
+    enemyName(EnemyKind.Wisp) => "wisp"
 
 fn enemyColor(kind: EnemyKind) -> String
     ? "Terminal color for enemy kind"
     match kind
-        EnemyKind.Imp -> "red"
-        EnemyKind.Demon -> "magenta"
-        EnemyKind.Ghost -> "white"
+        EnemyKind.Crawler -> "red"
+        EnemyKind.Brute -> "magenta"
+        EnemyKind.Wisp -> "white"
 
 verify enemyColor
-    enemyColor(EnemyKind.Imp) => "red"
-    enemyColor(EnemyKind.Demon) => "magenta"
-    enemyColor(EnemyKind.Ghost) => "white"
+    enemyColor(EnemyKind.Crawler) => "red"
+    enemyColor(EnemyKind.Brute) => "magenta"
+    enemyColor(EnemyKind.Wisp) => "white"
 
 fn enemyMaxHp(kind: EnemyKind) -> Int
     ? "Default HP for enemy kind"
     match kind
-        EnemyKind.Imp -> 3
-        EnemyKind.Demon -> 8
-        EnemyKind.Ghost -> 4
+        EnemyKind.Crawler -> 3
+        EnemyKind.Brute -> 8
+        EnemyKind.Wisp -> 4
 
 verify enemyMaxHp
-    enemyMaxHp(EnemyKind.Imp) => 3
-    enemyMaxHp(EnemyKind.Demon) => 8
-    enemyMaxHp(EnemyKind.Ghost) => 4
+    enemyMaxHp(EnemyKind.Crawler) => 3
+    enemyMaxHp(EnemyKind.Brute) => 8
+    enemyMaxHp(EnemyKind.Wisp) => 4
 
 fn dirArrow(angle: Float) -> String
     ? "Arrow for the minimap: one of 8 directions, the map's y axis pointing down"

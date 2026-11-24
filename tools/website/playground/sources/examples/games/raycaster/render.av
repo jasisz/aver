@@ -131,7 +131,7 @@ fn crosshairColor(state: GameState) -> String
         Option.None -> "white"
 
 verify crosshairColor
-    crosshairColor(GameState(grid = Tiles.gridOf(["....."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0)) => "yellow"
+    crosshairColor(GameState(grid = Tiles.gridOf(["....."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(3.5, 0.5, EnemyKind.Crawler, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0)) => "yellow"
     crosshairColor(GameState(grid = Tiles.gridOf(["....."]), player = Types.mkPlayer(0.5, 0.5), enemies = [], seed = 0, messages = [], status = Status.Playing, turnCount = 0)) => "white"
 
 fn renderCrosshair(state: GameState) -> Result<Unit, String>
@@ -186,7 +186,7 @@ fn renderHud(state: GameState) -> Result<Unit, String>
     hp = Int.max(0, state.player.hp)
     Terminal.setColor("yellow")?
     moveToChecked(panelX(), 0)?
-    Terminal.print("BRAILLE DOOM")?
+    Terminal.print("BRAILLE RAYCASTER")?
     Terminal.setColor(hpColor(hp))?
     moveToChecked(panelX(), 1)?
     Terminal.print("HP {hpBar(hp)} {hp}")?
@@ -233,9 +233,9 @@ fn seenEnemyAt(enemies: List<Enemy>, player: Player, grid: Grid, mx: Int, my: In
 
 verify seenEnemyAt
     seenEnemyAt([], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 3, 0) => Option.None
-    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Ghost, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 3, 0) => Option.Some(EnemyKind.Ghost)
-    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Ghost, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 2, 0) => Option.None
-    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Ghost, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."]), 3, 0) => Option.None
+    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Wisp, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 3, 0) => Option.Some(EnemyKind.Wisp)
+    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Wisp, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["....."]), 2, 0) => Option.None
+    seenEnemyAt([Types.mkEnemy(3.5, 0.5, EnemyKind.Wisp, 4)], Types.mkPlayer(0.5, 0.5), Tiles.gridOf(["..#.."]), 3, 0) => Option.None
 
 fn minimapCell(state: GameState, mx: Int, my: Int) -> Run
     ? "One minimap tile: the player's arrow, a seen enemy, wall, or open floor"
@@ -249,10 +249,10 @@ fn minimapCell(state: GameState, mx: Int, my: Int) -> Run
                 false -> Run(color = "green", text = " ")
 
 verify minimapCell
-    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 0, 0) => Run(color = "yellow", text = "→")
-    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 2, 0) => Run(color = "red", text = "*")
-    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 3, 0) => Run(color = "green", text = "#")
-    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Imp, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Imp, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 4, 0) => Run(color = "green", text = " ")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Crawler, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Crawler, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 0, 0) => Run(color = "yellow", text = "→")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Crawler, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Crawler, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 2, 0) => Run(color = "red", text = "*")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Crawler, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Crawler, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 3, 0) => Run(color = "green", text = "#")
+    minimapCell(GameState(grid = Tiles.gridOf(["...#."]), player = Types.mkPlayer(0.5, 0.5), enemies = [Types.mkEnemy(2.5, 0.5, EnemyKind.Crawler, 3), Types.mkEnemy(4.5, 0.5, EnemyKind.Crawler, 3)], seed = 0, messages = [], status = Status.Playing, turnCount = 0), 4, 0) => Run(color = "green", text = " ")
 
 fn minimapRow(state: GameState, my: Int, mx: Int, endX: Int, acc: List<Run>) -> List<Run>
     ? "Minimap tiles mx..endX-1 of map row my as runs"
