@@ -2,7 +2,9 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.38.0 (unreleased)
+## 0.38.0 "Pool" (unreleased)
+
+> _Jobs keep their workers, and threads keep their classes._
 
 0.37.1 was yanked from crates.io (aver-lang 0.37.1, aver-rt 0.4.22): it wrote a node's equality class bits in two stores and read them in two loads, so with several threads writing classes on shared nodes a torn read could, rarely, make `==` answer true for unequal values. 0.38.0 fixes that and keeps the rest of 0.37.1.
 
