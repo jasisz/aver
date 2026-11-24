@@ -28,8 +28,8 @@
 //! `lazy f(…)` returns (`ThinSum::LAZY`; only such a sum has deferred
 //! calls) keeps the state of its calls in those bits, also after a call is
 //! made, and has no classes; neither has a constructor without fields,
-//! which has no node. Every reader of the tag of a sum with classes reads
-//! the constructor's byte alone, which no class is written into.
+//! which has no node. Every reader of the tag of a sum with classes masks
+//! the word to the constructor's byte, which no class is written into.
 //!
 //! # Invariants
 //!
@@ -60,15 +60,15 @@
 //! - *Several threads.* A thread never takes an id another thread gave, the
 //!   slots differ, so ids of different threads cannot be confused even when
 //!   their numbers meet; a thread writing a node's bits over another's only
-//!   loses the other's class. The bits are written and read with `Relaxed`
-//!   atomics as their low byte and their upper 16 bits, never touching the
-//!   tag's byte, which never changes in a sum without `lazy`; a read that
-//!   meets two writes may take the halves from different ones, and such
-//!   bits are as any bits: by I1 they stand for an id only when this thread
-//!   gave that id to this very node. The word is read or written whole only
-//!   while no other thread reaches the node (it is made, made again in
-//!   freed memory, or freed), so accesses of different sizes never race;
-//!   a node is freed only when no other owner is left to write it. At
+//!   loses the other's class. The tag word is read and written whole, with
+//!   `Relaxed` atomics, and a write keeps the tag's byte, which never
+//!   changes in a sum without `lazy`: a read sees the bits of one write,
+//!   and of two writes at once one is kept, never parts of both. Parts of
+//!   two writes (a slot and high id byte of one, the low id byte of
+//!   another, as written in 0.37.1) could name an id this thread once gave
+//!   to a freed node at the same address, which I1 would take; whole bits
+//!   of this thread were written by it for this very node (I3). A node is
+//!   freed only when no other owner is left to write it. At
 //!   most [`SLOTS`] threads hold a slot at once; a thread past them has no
 //!   classes until one ends.
 //! - *A slot used again.* A thread that ends gives its slot back, and a new
